@@ -1,5 +1,13 @@
 # Mode « Jet Exhaust Unlimited » — plan et preuves RE
 
+> **Note (2026-11-09) — architecture cible atteinte.** Le code de ce plan est
+> désormais compilé dans la **DLL du mod** (`src/jet_*.cpp`, `build_mod.bat`), et
+> le loader StormFabric ne contient plus aucune référence au composant : il
+> expose seulement les primitives natives génériques (`sw_hook_inline`,
+> `sw_engine_symbol_find`, `sw_memory_*`, `sw_game_alloc`,
+> `sw_engine_string_make`). Les adresses des services moteur viennent du profil
+> de découverte du loader ; le site du sur-régime est résolu par signature.
+>
 > **Note de la copie (2026-11-08).** Ce document est repris tel quel de
 > StormFabric : c'est la note de travail historique, pas la référence de l'état
 > courant. Deux points ont évolué depuis : le stub utilise `INFINITY` (`+inf`) et

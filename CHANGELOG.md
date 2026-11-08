@@ -1,9 +1,51 @@
 # Changelog — Jet Exhaust Unlimited
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
-Version du mod : `1.2.0` (celle de `mod/jet_unlimited/mod.json`).
-Le code de hook est compilé dans le loader StormFabric ; la source de vérité
-reste `StormFabric/src/jet_*.cpp`.
+Version du mod : `2.0.0` (celle de `mod/jet_unlimited/mod.json`).
+
+Le mod est **autonome** : tout le code de hook est compilé dans
+`jet_unlimited.dll` (sources `src/jet_*.cpp`). Le loader StormFabric ne contient
+plus aucun code propre à ce mod ; il expose des primitives natives génériques.
+
+---
+
+## [2.0.0] — 2026-11-09
+
+### Architecture
+
+- **Le mod est autonome.** `jet_unlimited.dll` porte l'injection catalogue et le
+  patch de sur-régime. Le loader ne contient plus aucune référence au composant.
+- Le mod n'utilise que l'API native générique du loader (extension `api->native`) :
+  `findSymbol` (rôles moteur résolus par le profil de découverte),
+  `findSignature` (signature propre au mod, occurrence unique),
+  `readMemory`/`writeMemory` (bornés, protection restaurée),
+  `hookInline`/`hookRestore` (contrat d'octets, trampoline loader, restauration
+  idempotente), `gameAlloc`, `stringMake`/`stringFree`, `codeAllocNear`,
+  `engineBuild`.
+- Plus aucune RVA d'exécutable dans le mod : les services moteur viennent du
+  profil du loader ; le site du sur-régime vient d'une signature validée.
+- Les hooks sont restaurés avant le déchargement de la DLL (`SwModUnload` puis
+  `DllMain(PROCESS_DETACH)`), dans l'ordre inverse de l'installation.
+
+### Ajouté
+
+- `build_mod.bat` : compilation du mod contre le SDK StormFabric, produit
+  `mod/jet_unlimited/jet_unlimited.dll`.
+- `tests/run_tests.bat` + `tests/mod_logic_tests.cpp` : tests hors jeu autonomes
+  (masque de signature, stub machine, croissance de ring, injection à la demande,
+  géométrie du clone, chaînes, saut absolu).
+
+### Supprimé
+
+- `tools/sync_to_stormfabric.bat` : plus nécessaire, le mod ne copie plus ses
+  sources dans le loader.
+- Les copies de tests dépendantes des internes du loader.
+
+### Corrigé
+
+- Le composant **reste sur le véhicule après un aller-retour à l'atelier** :
+  l'injection est déclenchée à la demande dans le hook de lookup et ré-armée
+  après `ComponentRegistry::Clear`, sans sondage temporisé.
 
 ---
 

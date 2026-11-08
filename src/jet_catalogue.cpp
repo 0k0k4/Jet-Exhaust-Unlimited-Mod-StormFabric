@@ -1,6 +1,5 @@
 #include "jet_catalogue.h"
-#include "mods_scan.h"
-#include "log.h"
+#include "jet_sdk.h"
 #include <windows.h>
 #include <cstdint>
 #include <cstdio>
@@ -8,23 +7,16 @@
 #include <new>
 #include <string>
 
-namespace swml {
+namespace jet {
 namespace {
 
-// FindComponentDefinitionByName(registry, name) : le registre arrive en RCX.
-// 1.15.23 = 0x46e900, 1.15.18 = 0x46f380 (voir docs/ENGINE_FUNCTION_MAPPING.md).
-constexpr uint32_t kFindDefNew = 0x46e900, kFindDefOld = 0x46f380;
-constexpr uint8_t kFindDefBytes[64] = {0x48,0x89,0x54,0x24,0x10,0x48,0x89,0x4C,0x24,0x08,0x53,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x83,0xEC,0x58,0x48,0x8B,0xF2,0x4C,0x8B,0xC1,0x33,0xED,0x8B,0xFD,0x89,0x6C,0x24,0x20,0x44,0x8B,0xFD,0x8B,0x81,0x08,0x01,0x00,0x00,0x89,0x84,0x24,0xB0,0x00,0x00,0x00,0x0F,0x1F,0x84,0x00,0x00,0x00,0x00,0x00};
-constexpr uint8_t kFindDefMask[64] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF};
-
-// ComponentRegistry::Clear(registry) : détruit ET libère le contenu des rings.
-// Il faut retirer nos entrées AVANT, sinon le moteur libère nos blocs avec ses
-// propres allocateurs (8× delete sur un bloc unique, _aligned_free sur nos
-// chaînes) et détruit les sous-buffers partagés avec la définition vanilla.
-constexpr uint32_t kClearNew = 0x5f1ac0, kClearOld = 0x5f1fd0;
-// Prologue de Clear = 5+5+1+4+3 = 18 octets (instructions entières).
-// D4 : tailles dérivées des longueurs d'instruction des prologues (garantit
-// qu'on ne coupe JAMAIS une instruction en deux).
+// Les deux hooks du module sont des SERVICES MOTEUR GÉNÉRIQUES : le loader
+// StormFabric les résout depuis son profil de découverte (contrat d'octets
+// retenu, validé avant tout écriture) et les expose via l'API native. Le mod ne
+// contient donc AUCUNE adresse d'exécutable.
+//
+// Tailles de prologue : dérivées des longueurs d'instruction certifiées, ce qui
+// garantit qu'on ne coupe jamais une instruction en deux (MOV RBX,RCX = 48 8B D9).
 constexpr size_t kFindLens[] = {5, 5, 1, 1, 1, 1, 2};          // mov, mov, push x4, push r12
 constexpr size_t kClearLens[] = {5, 5, 1, 4, 3};                // mov, mov, push, sub, mov
 constexpr size_t Sum(const size_t* v, size_t n) {
@@ -34,18 +26,6 @@ constexpr size_t kFindPatch = Sum(kFindLens, sizeof(kFindLens) / sizeof(kFindLen
 constexpr size_t kClearPatch = Sum(kClearLens, sizeof(kClearLens) / sizeof(kClearLens[0]));
 static_assert(kFindPatch == 16, "prologue Find: frontiere d'instruction changee");
 static_assert(kClearPatch == 18, "prologue Clear: frontiere d'instruction changee");
-constexpr uint8_t kClearBytes[64] = {0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x4C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9,0x48,0x81,0xC1,0x10,0x01,0x00,0x00,0x4C,0x8D,0x0D,0x00,0x6D,0x2A,0x00,0xBA,0x18,0x00,0x00,0x00,0x44,0x8D,0x42,0xF8,0xE8,0xFA,0x6F,0x36,0x00,0x90,0x33,0xFF,0x39,0xBB,0x00,0x01,0x00,0x00,0x74,0x19,0x48,0x8B,0x8B,0xF8,0x00,0x00,0x00};
-constexpr uint8_t kClearMask[64] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF};
-
-// Table de localisation (FUN_1401f3b30 / 0x1f5610).
-constexpr uint32_t kLocNew = 0x1f3b30, kLocOld = 0x1f5610;
-constexpr uint8_t kLocBytes[72] = {0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x6C,0x24,0x18,0x48,0x89,0x74,0x24,0x20,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xEC,0x20,0x48,0x8B,0xDA,0x4C,0x8B,0xF1,0xE8,0x6D,0xFE,0xFF,0xFF,0x48,0x8D,0xB8,0x48,0xFF,0x00,0x00,0x8B,0x4F,0x10,0x44,0x8B,0x47,0x08,0x41,0x3B,0xC8,0x75,0x1D,0x43,0x8D,0x14,0x00,0xB8,0x20,0x00,0x00,0x00,0x3B,0xD0,0x0F,0x42,0xD0,0x48,0x8B,0xCF,0xE8};
-constexpr uint8_t kLocMask[72] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-
-// Croissance d'un ring (FUN_1408de0b0 / 0x8dd150).
-constexpr uint32_t kGrowNew = 0x8de0b0, kGrowOld = 0x8dd150;
-constexpr uint8_t kGrowBytes[64] = {0x40,0x56,0x57,0x48,0x83,0xEC,0x28,0x48,0x8B,0xF9,0x8B,0xF2,0x3B,0x51,0x08,0x0F,0x84,0xE1,0x00,0x00,0x00,0x48,0x89,0x6C,0x24,0x48,0x85,0xD2,0x0F,0x84,0xBF,0x00,0x00,0x00,0x8B,0xCE,0xBA,0x10,0x00,0x00,0x00,0x48,0xC1,0xE1,0x03,0xE8,0x8A,0x4C,0x0D,0x00,0x48,0x8B,0xE8,0x48,0x8B,0x07,0x48,0x85,0xC0,0x0F,0x84,0xAA,0x00,0x00};
-constexpr uint8_t kGrowMask[64] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
 // Disposition d'une définition (0x2d08 octets, 8 variantes chaînées).
 //
@@ -101,10 +81,10 @@ constexpr uint32_t kSignatureValue = 500123;
 constexpr int32_t kCategory = 11;   // « JET ENGINES » (valeur historique, non utilisée : on lit la catégorie réelle de la source)
 
 using FindDefFn = void* (*)(void*, const void*);
-using LocRegisterFn = void (*)(const sw::EStr*, const sw::EStr*);
+using LocRegisterFn = void (*)(const SwEngineString*, const SwEngineString*);
 using GrowFn = void (*)(void*, uint32_t);
 using ClearFn = void (*)(void*);
-void RegisterAllLocalization(const sw::Api& api, LocRegisterFn fn);
+void RegisterAllLocalization(LocRegisterFn fn);
 
 // Géométrie du clone : PURE et testable hors jeu (voir JetCatalogueCloneGeometry).
 // Un pas plus petit que la taille d'une définition fait empiéter chaque variante
@@ -114,17 +94,16 @@ bool FieldInsideVariant(uint64_t stride, uint64_t offset, uint64_t size) {
 }
 
 struct State {
-    const sw::Api* api = nullptr;
     // hook FindComponentDefinitionByName
     uint8_t* findTarget = nullptr;
     uint8_t* findTramp = nullptr;
     FindDefFn originalFind = nullptr;
-    uint8_t findSaved[kFindPatch] = {};
+    SwHandle findHandle = 0;      // poignée du loader (sw_hook_restore)
     // hook ComponentRegistry::Clear
     uint8_t* clearTarget = nullptr;
     uint8_t* clearTramp = nullptr;
     ClearFn originalClear = nullptr;
-    uint8_t clearSaved[kClearPatch] = {};
+    SwHandle clearHandle = 0;
     LocRegisterFn locRegister = nullptr;
     GrowFn grow = nullptr;
     std::string xmlPath;
@@ -138,7 +117,7 @@ struct State {
     void* builtFor = nullptr;     // registre pour lequel `definition` a été construite
     int32_t builtCategory = -1;   // catégorie (bucket) lue sur la définition source
     void* descriptor = nullptr;   // descripteur XML 32 o (construit UNE fois)
-    sw::EStr descriptorId = {}, descriptorXml = {};
+    SwEngineString descriptorId = {}, descriptorXml = {};
     bool registered = false;      // insérée dans les rings (ne jamais re-construire)
     bool failed = false;
     bool clearing = false;        // B1/M6 : Clear en cours -> ne pas injecter
@@ -165,13 +144,6 @@ CRITICAL_SECTION g_lock;
 bool g_lockInit = false;
 inline void LockAcquire() { if (g_lockInit) EnterCriticalSection(&g_lock); }
 inline void LockRelease() { if (g_lockInit) LeaveCriticalSection(&g_lock); }
-
-bool SigMatches(const uint8_t* p, const uint8_t* bytes, const uint8_t* mask, size_t n) {
-    __try {
-        for (size_t i = 0; i < n; ++i) if (mask[i] && p[i] != bytes[i]) return false;
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-}
 
 bool IsComponentId(const uint8_t* p, uint32_t len) {
     return p && len == sizeof(kComponentId) - 1 && _strnicmp(reinterpret_cast<const char*>(p), kComponentId, len) == 0;
@@ -548,12 +520,11 @@ bool EnsureVariants(void* reg, bool allowGrow) {
 // l'operator delete correspondant).
 bool EnsureDescriptorStruct() {
     if (g_cat.descriptor) return true;
-    if (g_xml.empty() || !g_cat.api) return false;
-    const sw::Api& api = *g_cat.api;
-    if (!g_cat.descriptorId.data) sw::StrMake(api, g_cat.descriptorId, kComponentId);
-    if (!g_cat.descriptorXml.data) sw::StrMake(api, g_cat.descriptorXml, g_xml.c_str());
+    if (g_xml.empty() || !g_engine.native) return false;
+    if (!g_cat.descriptorId.data) StrMake(g_cat.descriptorId, kComponentId);
+    if (!g_cat.descriptorXml.data) StrMake(g_cat.descriptorXml, g_xml.c_str());
     if (!g_cat.descriptorId.data || !g_cat.descriptorXml.data) return false;
-    auto* desc = static_cast<uint8_t*>(api.op_new(32));
+    auto* desc = static_cast<uint8_t*>(g_engine.native->gameAlloc(g_engine.host, 32));
     if (!desc) return false;
     memset(desc, 0, 32);
     *reinterpret_cast<char**>(desc + 0x00) = g_cat.descriptorId.data;
@@ -627,7 +598,6 @@ enum class PrepareResult { kReady = 0, kNoSource, kRefused };
 
 PrepareResult PrepareDefinition(void* reg) {
     if (g_cat.definition && g_cat.builtFor == reg) return PrepareResult::kReady;
-    const sw::Api& api = *g_cat.api;
     SourceInfo info;
     void* source = FindInRegistryEx(reg, kSourceId, info.id, sizeof(info.id));
     if (!source) {
@@ -669,7 +639,7 @@ PrepareResult PrepareDefinition(void* reg) {
     if (!PrepareDescriptor()) return PrepareResult::kRefused;
     void* variants[kVariants] = {};
     for (size_t k = 0; k < kVariants; ++k) {
-        variants[k] = api.op_new(g_definitionBytes);
+        variants[k] = g_engine.native->gameAlloc(g_engine.host, g_definitionBytes);
         if (!variants[k]) break;
         __try { memset(variants[k], 0, g_definitionBytes); }
         __except (EXCEPTION_EXECUTE_HANDLER) { variants[k] = nullptr; break; }
@@ -682,9 +652,9 @@ PrepareResult PrepareDefinition(void* reg) {
             memcpy(dst, src ? src : source, g_definitionBytes);
             for (size_t j = 0; j < kVariants; ++j)
                 reinterpret_cast<void**>(dst)[j] = variants[j];
-            sw::EStr id = {}, name = {};
-            sw::StrMake(api, id, kComponentId);
-            sw::StrMake(api, name, kComponentName);
+            SwEngineString id = {}, name = {};
+            StrMake(id, kComponentId);
+            StrMake(name, kComponentName);
             if (!id.data || !name.data) { ok = false; break; }
             *reinterpret_cast<char**>(dst + kOffId) = id.data;
             *reinterpret_cast<uint32_t*>(dst + kOffIdLen) = id.len;
@@ -743,7 +713,7 @@ bool InsertDefinition(void* reg, bool allowGrow) {
 // publier dans CE registre aussi. C'est le cas mesuré en jeu : après le chargement, le jeu
 // résout les composants d'un véhicule dans un registre où notre entrée n'était pas.
 bool TryInjectCurrentRegistry(bool allowGrow, bool otherRegistry = false) {
-    if (!g_cat.api) return false;
+    if (!g_engine.native) return false;
     if (g_cat.shuttingDown) return false;       // PROCESS_DETACH : plus aucune ecriture
     if ((g_cat.registered && !otherRegistry) || g_cat.failed || g_cat.clearing || g_cat.inInject)
         return false;
@@ -774,7 +744,7 @@ bool TryInjectCurrentRegistry(bool allowGrow, bool otherRegistry = false) {
     if (injected) {
         g_cat.attempts = 0;
         __try {
-            if (g_cat.locRegister) RegisterAllLocalization(*g_cat.api, g_cat.locRegister);
+            if (g_cat.locRegister) RegisterAllLocalization(g_cat.locRegister);
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         LogInfo("Jet: composant '%s' injecte au catalogue (memoire, value=%u, registre=%p%s)",
                 kComponentId, kSignatureValue, reg, otherRegistry ? ", second registre" : "");
@@ -809,14 +779,14 @@ constexpr uint64_t kReinjectMinPeriodMs = 10;
 //
 // `allowGrow` reste false : on est dans une frame du jeu, jamais de realloc de ring.
 void MaybeReinjectOnLookup(void* registry) {
-    if (!g_cat.api || !registry) return;
+    if (!g_engine.native || !registry) return;
     if (g_cat.shuttingDown || g_cat.clearing || g_cat.inInject) return;
     if (g_cat.injectDisabled) return;
     if (!JetCatalogueNeedsInjection(g_cat.registered, g_cat.builtFor == registry)) return;
     const uint64_t now = GetTickCount64();
     if (g_cat.lastAttemptMs && now - g_cat.lastAttemptMs < kReinjectMinPeriodMs) return;
     LockAcquire();
-    if (!g_cat.clearing && !g_cat.inInject && g_cat.api) {
+    if (!g_cat.clearing && !g_cat.inInject) {
         Why why = Why::kRingCap;
         g_cat.lastAttemptMs = now;
         if (ValidateRegistryEx(registry, &why)) {
@@ -953,7 +923,7 @@ void* LookupOurComponent(void* registry) {
         g_cat.attempts = 0;
         g_cat.lazyMisses = 0;
         __try {
-            if (g_cat.locRegister) RegisterAllLocalization(*g_cat.api, g_cat.locRegister);
+            if (g_cat.locRegister) RegisterAllLocalization(g_cat.locRegister);
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         // PREUVE attendue au prochain essai : le lookup de notre identifiant est servi
         // à la demande, donc AVANT la conclusion « composant inconnu » du jeu.
@@ -1088,8 +1058,8 @@ void HookedClear(void* registry) {
     // poignées au lieu de risquer un usage après libération. Il est reconstruit à
     // la prochaine injection (fuite bornée : 1 descripteur par Clear).
     g_cat.descriptor = nullptr;
-    g_cat.descriptorId = sw::EStr{};
-    g_cat.descriptorXml = sw::EStr{};
+    g_cat.descriptorId = SwEngineString{};
+    g_cat.descriptorXml = SwEngineString{};
     // Les rings viennent d'être vidés : le clone ne doit JAMAIS être réutilisé tel quel
     // (ses buffers copiés viennent d'un état du registre qui n'existe plus). `epoch`
     // invalide toute réutilisation ; la ré-injection aura lieu au PREMIER lookup de notre
@@ -1111,27 +1081,27 @@ void HookedClear(void* registry) {
     LockRelease();
 }
 
-void RegisterLoc(const sw::Api& api, LocRegisterFn fn, const char* key, const char* value) {
+void RegisterLoc(LocRegisterFn fn, const char* key, const char* value) {
     if (!fn || !key || !value) return;
-    sw::EStr k = {}, v = {};
-    sw::StrMake(api, k, key);
-    sw::StrMake(api, v, value);
+    SwEngineString k = {}, v = {};
+    StrMake(k, key);
+    StrMake(v, value);
     __try { fn(&k, &v); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    sw::StrRelease(api, k);
-    sw::StrRelease(api, v);
+    StrRelease(k);
+    StrRelease(v);
 }
 
-void RegisterAllLocalization(const sw::Api& api, LocRegisterFn fn) {
+void RegisterAllLocalization(LocRegisterFn fn) {
     char key[160];
-    RegisterLoc(api, fn, "DEF_JET_ENGINE_COMBUSTION_CHAMBER_UNLIMITED_NAME", kComponentName);
+    RegisterLoc(fn, "DEF_JET_ENGINE_COMBUSTION_CHAMBER_UNLIMITED_NAME", kComponentName);
     snprintf(key, sizeof(key), "def_%s_name", kComponentId);
-    RegisterLoc(api, fn, key, kComponentName);
+    RegisterLoc(fn, key, kComponentName);
     snprintf(key, sizeof(key), "def_%s_desc", kComponentId);
-    RegisterLoc(api, fn, key,
+    RegisterLoc(fn, key,
                 "A combustion chamber that burns jet fuel to sustain a jet engine. "
                 "This one is not limited by the over-revolution protection (added by StormFabric).");
     snprintf(key, sizeof(key), "def_%s_s_desc", kComponentId);
-    RegisterLoc(api, fn, key, "Unlimited RPS combustion chamber");
+    RegisterLoc(fn, key, "Unlimited RPS combustion chamber");
     static const char* kNodeLabels[5] = {"Fuel", "Throttle", "Air Pressure", "Temperature", "RPS"};
     static const char* kNodeDesc[5] = {
         "Jet fuel input required for combustion.",
@@ -1141,80 +1111,33 @@ void RegisterAllLocalization(const sw::Api& api, LocRegisterFn fn) {
         "The rotations per second generated by the chamber."};
     for (int i = 0; i < 5; ++i) {
         snprintf(key, sizeof(key), "def_%s_node_%d_label", kComponentId, i);
-        RegisterLoc(api, fn, key, kNodeLabels[i]);
+        RegisterLoc(fn, key, kNodeLabels[i]);
         snprintf(key, sizeof(key), "def_%s_node_%d_desc", kComponentId, i);
-        RegisterLoc(api, fn, key, kNodeDesc[i]);
+        RegisterLoc(fn, key, kNodeDesc[i]);
     }
 }
 
-// D1 : PAGE_EXECUTE_READWRITE (jamais PAGE_READWRITE sur du code : la page
-// perdrait EXECUTE pendant l'écriture et un autre thread prendrait un AV).
-// D2 : l'échec de restauration est traité (sinon la page reste inexécutable).
-bool WriteProtected(void* addr, const void* data, size_t size) {
-    DWORD old = 0;
-    if (!VirtualProtect(addr, size, PAGE_EXECUTE_READWRITE, &old)) return false;
-    memcpy(addr, data, size);
-    FlushInstructionCache(GetCurrentProcess(), addr, size);
-    DWORD ignored = 0;
-    if (!VirtualProtect(addr, size, old, &ignored)) {
-        LogError("Jet: restauration de protection echouee a %p ; hook abandonne", addr);
-        return false;
-    }
-    return true;
-}
+// Les écritures de code passent EXCLUSIVEMENT par l'API native du loader :
+// validation VirtualQuery, PAGE_EXECUTE_READWRITE, restauration de la protection
+// d'origine, FlushInstructionCache, et refus si les octets du prologue ne
+// correspondent pas au contrat validé. Le mod ne contient plus aucune écriture
+// directe dans le code du jeu.
 
-// D3 : publication ordonnee — on écrit d'abord la cible (imm64) et le disp32,
-// puis les deux octets d'opcode en DERNIER. Un thread concurrent ne peut donc
-// jamais décoder un `jmp [rip+0]` dont l'imm64 serait encore vide.
-bool WriteJumpProtected(uint8_t* target, const uint8_t* patch, size_t patchSize) {
-    if (!target || !patch || patchSize < 14) return false;
-    DWORD old = 0;
-    if (!VirtualProtect(target, patchSize, PAGE_EXECUTE_READWRITE, &old)) return false;
-    memcpy(target + 2, patch + 2, patchSize - 2);   // disp32 + imm64 + NOP
-    FlushInstructionCache(GetCurrentProcess(), target, patchSize);
-    memcpy(target, patch, 2);                       // FF 25 en dernier
-    FlushInstructionCache(GetCurrentProcess(), target, patchSize);
-    DWORD ignored = 0;
-    if (!VirtualProtect(target, patchSize, old, &ignored)) {
-        LogError("Jet: restauration de protection echouee a %p", target);
-        return false;
-    }
-    return true;
-}
-
-// Encode `jmp [rip+0]` (FF 25 00000000 <imm64>) puis du NOP jusqu'à patchSize.
-// Le disp32 DOIT être nul : sinon on saute vers une adresse arbitraire (AV).
-// (definition publique plus bas : BuildAbsoluteJump)
-
-// Hook inline : saut absolu de `patchSize` octets + trampoline = prologue copié
-// + saut absolu vers target+patchSize. `patchSize` DOIT couvrir des instructions
-// entières (sinon on coupe une instruction en deux : cf. MOV RBX,RCX 48 8B D9).
-bool InstallHook(uint8_t* target, void* hook, uint8_t* saved, size_t patchSize,
-                 uint8_t** trampOut, void** originalOut) {
-    if (!target || !hook || !saved || patchSize < 14 || patchSize > 24) return false;
-    uint8_t* tramp = static_cast<uint8_t*>(VirtualAlloc(nullptr, 96, MEM_COMMIT | MEM_RESERVE,
-                                                        PAGE_EXECUTE_READWRITE));
-    if (!tramp) return false;
-    memcpy(tramp, target, patchSize);
-    size_t o = patchSize;
-    if (JetCatalogueBuildJump(tramp + o, 24, target + patchSize) != 24) {
-        VirtualFree(tramp, 0, MEM_RELEASE);
-        return false;
-    }
-    memcpy(saved, target, patchSize);
-    uint8_t patch[24];
-    if (JetCatalogueBuildJump(patch, patchSize, hook) != patchSize) {
-        VirtualFree(tramp, 0, MEM_RELEASE);
-        return false;
-    }
-    if (!WriteJumpProtected(target, patch, patchSize)) {
-        VirtualFree(tramp, 0, MEM_RELEASE);
-        return false;
-    }
-    // B2 : publier le trampoline AVANT d'écrire le patch, sinon une cible déjà
-    // patchée avec un `original` nul casserait tous les lookups.
-    *trampOut = tramp;
-    *originalOut = tramp;
+// Hook inline d'un prologue de `patchSize` octets (frontière d'instruction
+// garantie par kFindLens / kClearLens). Le trampoline appartient au loader et
+// sert d'original : aucun octet n'est copié ni libéré par le mod.
+bool InstallHook(uint8_t* target, void* hook, size_t patchSize, SwHandle* handleOut,
+                 void** originalOut) {
+    if (!g_engine.native || !g_engine.host || !target || !hook || !handleOut || !originalOut) return false;
+    if (patchSize < 5 || patchSize > 32) return false;
+    uint8_t expected[32] = {};
+    if (g_engine.native->readMemory(g_engine.host, target, expected, patchSize) != SW_OK) return false;
+    void* trampoline = nullptr;
+    SwHandle handle = 0;
+    if (g_engine.native->hookInline(g_engine.host, target, hook, expected, patchSize,
+                                    &trampoline, &handle) != SW_OK) return false;
+    *originalOut = trampoline;
+    *handleOut = handle;
     return true;
 }
 
@@ -1273,14 +1196,6 @@ const char* JetCatalogueLazyResultText(LazyResult result) {
     return "inconnu";
 }
 
-int JetCatalogueBuild(const uint8_t* base, size_t size) {
-    if (!base) return 0;
-    bool okNew = (kFindDefNew + 64 <= size) && SigMatches(base + kFindDefNew, kFindDefBytes, kFindDefMask, 64);
-    bool okOld = (kFindDefOld + 64 <= size) && SigMatches(base + kFindDefOld, kFindDefBytes, kFindDefMask, 64);
-    if (okNew == okOld) return 0;
-    return okNew ? 2 : 1;
-}
-
 size_t JetCatalogueBuildJump(uint8_t* out, size_t patchSize, void* target) {
     if (!out || !target || patchSize < 14 || patchSize > 24) return 0;
     memset(out, 0x90, patchSize);
@@ -1290,71 +1205,66 @@ size_t JetCatalogueBuildJump(uint8_t* out, size_t patchSize, void* target) {
     return patchSize;
 }
 
-bool InitJetCatalogueInjection(const sw::Api& api, const std::string& relativeXmlPath) {
+bool InitJetCatalogueInjection(const SwModHost* host, const char* xmlPath) {
     if (g_cat.findTarget) return true;
-    // ACTIF PAR DÉFAUT : seuls les hooks de catalogue sont posés (voir JetCatalogueInjectionRequested).
+    if (!g_engine.native || !g_engine.host || !host) return false;
+    // ACTIF PAR DÉFAUT : seuls les hooks de catalogue sont posés.
     if (!JetCatalogueInjectionRequested()) {
         LogInfo("Jet: injection catalogue desactivee (SW_JET_CATALOGUE=0) ; hooks non poses");
         return false;
     }
-    if (!api.base) return false;
-    constexpr size_t kImageSize = 0xd8b000;
-    int build = JetCatalogueBuild(api.base, kImageSize);
+    const uint32_t build = g_engine.build;
     if (!build) {
-        LogError("Jet: catalogue non injecte (FindComponentDefinitionByName non certifie)");
+        LogError("Jet: build moteur non certifie ; injection catalogue annulee");
         return false;
     }
-    // Disposition de l'objet « définition » PROPRE AU BUILD : 0x2d08 sur 1.15.23,
-    // 0x2848 sur 1.15.18. Un pas trop petit fait empiéter nos variantes, donc
-    // détruire nos entrées par le moteur corrompt le tas (crash au shutdown).
-    g_definitionBytes = static_cast<size_t>(JetCatalogueDefinitionBytes(build));
-    LogInfo("Jet: disposition definition build %d : %zu o par variante (dernier champ detruit +0x%llX)",
+    // Disposition de l'objet « définition » PROPRE AU BUILD (0x2d08 / 0x2848).
+    // L'identité de build vient du profil certificaté du loader, jamais d'une RVA.
+    g_definitionBytes = static_cast<size_t>(JetCatalogueDefinitionBytes(static_cast<int>(build)));
+    LogInfo("Jet: disposition definition build %u : %zu o par variante (dernier champ detruit +0x%llX)",
             build, g_definitionBytes,
-            static_cast<unsigned long long>(JetCatalogueDestroyedTail(build)));
-    const size_t findRva = build == 2 ? kFindDefNew : kFindDefOld;
-    const size_t clearRva = build == 2 ? kClearNew : kClearOld;
-    const size_t locRva = build == 2 ? kLocNew : kLocOld;
-    const size_t growRva = build == 2 ? kGrowNew : kGrowOld;
-    uint8_t* base = api.base;
-    if (!SigMatches(base + clearRva, kClearBytes, kClearMask, 64)) {
-        LogError("Jet: ComponentRegistry::Clear non certifie ; injection catalogue annulee");
-        return false;
-    }
-    if (!SigMatches(base + locRva, kLocBytes, kLocMask, 72)) {
-        LogError("Jet: insertion de localisation non certifiee ; injection catalogue annulee");
-        return false;
-    }
-    if (!SigMatches(base + growRva, kGrowBytes, kGrowMask, 64)) {
-        LogError("Jet: croissance de ring non certifiee ; injection catalogue annulee");
+            static_cast<unsigned long long>(JetCatalogueDestroyedTail(static_cast<int>(build))));
+    // Services moteur génériques résolus par le profil de découverte du loader.
+    auto service = [host](const char* role) -> uint8_t* {
+        return static_cast<uint8_t*>(
+            const_cast<void*>(g_engine.native->findSymbol(host, role)));
+    };
+    uint8_t* findTarget = service("engine.component.lookup");
+    uint8_t* clearTarget = service("engine.component.clear");
+    uint8_t* locRegister = service("engine.localization.register");
+    uint8_t* grow = service("engine.component.grow");
+    if (!findTarget || !clearTarget || !locRegister || !grow) {
+        LogError("Jet: services catalogue non resolus par le profil (lookup=%p clear=%p loc=%p grow=%p) "
+                 "; aucun hook installe",
+                 (void*)findTarget, (void*)clearTarget, (void*)locRegister, (void*)grow);
         return false;
     }
     if (!g_lockInit) { InitializeCriticalSection(&g_lock); g_lockInit = true; }
-    g_cat.api = &api;
-    g_cat.locRegister = reinterpret_cast<LocRegisterFn>(base + locRva);
-    g_cat.grow = reinterpret_cast<GrowFn>(base + growRva);
-    g_cat.xmlPath = relativeXmlPath;
+    g_cat.locRegister = reinterpret_cast<LocRegisterFn>(locRegister);
+    g_cat.grow = reinterpret_cast<GrowFn>(grow);
+    if (xmlPath && *xmlPath) g_cat.xmlPath = xmlPath;
     g_cat.injectDisabled = InjectionDisabledByMarker();
     if (g_cat.injectDisabled)
         LogWarn("Jet: marqueur .no_catalogue_injection present -> composant NON injecte "
                 "(hooks de diagnostic conserves) ; le catalogue reste 100%% vanilla");
     // Hook du lookup de définitions.
-    if (!InstallHook(base + findRva, reinterpret_cast<void*>(&HookedFindDef), g_cat.findSaved,
-                     kFindPatch, &g_cat.findTramp, reinterpret_cast<void**>(&g_cat.originalFind))) {
-        LogError("Jet: hook FindComponentDefinitionByName impossible");
+    if (!InstallHook(findTarget, reinterpret_cast<void*>(&HookedFindDef), kFindPatch,
+                     &g_cat.findHandle, reinterpret_cast<void**>(&g_cat.originalFind))) {
+        LogError("Jet: hook FindComponentDefinitionByName refuse par l'API native");
         return false;
     }
-    g_cat.findTarget = base + findRva;
+    g_cat.findTarget = findTarget;
     // Hook de ComponentRegistry::Clear (nettoyage avant destruction par le moteur).
-    if (!InstallHook(base + clearRva, reinterpret_cast<void*>(&HookedClear), g_cat.clearSaved,
-                     kClearPatch, &g_cat.clearTramp, reinterpret_cast<void**>(&g_cat.originalClear))) {
-        WriteProtected(g_cat.findTarget, g_cat.findSaved, kFindPatch);
-        VirtualFree(g_cat.findTramp, 0, MEM_RELEASE);
+    if (!InstallHook(clearTarget, reinterpret_cast<void*>(&HookedClear), kClearPatch,
+                     &g_cat.clearHandle, reinterpret_cast<void**>(&g_cat.originalClear))) {
+        g_engine.native->hookRestore(g_engine.host, g_cat.findHandle);
+        g_cat.findHandle = 0;
         g_cat.findTarget = nullptr;
-        LogError("Jet: hook ComponentRegistry::Clear impossible ; injection annulee");
+        LogError("Jet: hook ComponentRegistry::Clear refuse ; injection annulee");
         return false;
     }
-    g_cat.clearTarget = base + clearRva;
-    LogInfo("Jet: hooks catalogue installes (build %d) : lookup + ComponentRegistry::Clear", build);
+    g_cat.clearTarget = clearTarget;
+    LogInfo("Jet: hooks catalogue installes (build %u) : lookup + ComponentRegistry::Clear", build);
     return true;
 }
 
@@ -1365,7 +1275,7 @@ bool InitJetCatalogueInjection(const sw::Api& api, const std::string& relativeXm
 void JetCatalogueTick() {
     if (g_cat.shuttingDown) return;            // PROCESS_DETACH : plus aucune ecriture
     if (!g_cat.findTarget || g_cat.registered || g_cat.failed || g_cat.clearing) return;
-    if (!g_cat.api) return;
+    if (!g_engine.native) return;
     if (!g_cat.registry) {
         static bool once = false;
         if (!once) { once = true; LogInfo("Jet[tick] en attente du registre (findTarget=1 api=1)"); }
@@ -1401,8 +1311,11 @@ void ShutdownJetCatalogueInjection() {
     if (removed)
         LogInfo("Jet: arret - %zu entree(s) retiree(s) du catalogue avant restauration des hooks", removed);
     LockRelease();
-    if (g_cat.findTarget) WriteProtected(g_cat.findTarget, g_cat.findSaved, kFindPatch);
-    if (g_cat.clearTarget) WriteProtected(g_cat.clearTarget, g_cat.clearSaved, kClearPatch);
+    // Ordre inverse de l'installation ; sw_hook_restore est idempotent.
+    if (g_cat.clearHandle) g_engine.native->hookRestore(g_engine.host, g_cat.clearHandle);
+    if (g_cat.findHandle) g_engine.native->hookRestore(g_engine.host, g_cat.findHandle);
+    g_cat.clearHandle = 0;
+    g_cat.findHandle = 0;
     g_cat.findTarget = nullptr;
     g_cat.clearTarget = nullptr;
     g_cat.findTramp = nullptr;
@@ -1412,8 +1325,8 @@ void ShutdownJetCatalogueInjection() {
     g_cat.registered = false;
     ForgetDefinition();
     g_cat.descriptor = nullptr;
-    g_cat.descriptorId = sw::EStr{};
-    g_cat.descriptorXml = sw::EStr{};
+    g_cat.descriptorId = SwEngineString{};
+    g_cat.descriptorXml = SwEngineString{};
     LogInfo("Jet: hooks catalogue restaures (demontage)");
 }
 
@@ -1460,4 +1373,4 @@ bool JetCatalogueStringCoherent(uint64_t ptr, uint32_t len, uint32_t cap) {
     return true;
 }
 
-}  // namespace swml
+}  // namespace jet

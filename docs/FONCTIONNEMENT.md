@@ -12,12 +12,18 @@ Le mod ajoute un composant de chambre de combustion sans la destruction
 automatique au sur-régime. Il ne remplace aucun fichier du jeu et ne modifie pas
 la définition vanilla.
 
-Deux modules distincts, compilés dans le loader :
+Deux modules distincts, compilés dans **la DLL du mod** (le loader n'en connaît
+rien) :
 
 | Module | Rôle | Fonction d'entrée |
 |---|---|---|
 | `jet_catalogue` | clone une définition vanilla et l'insère dans le registre du jeu, en mémoire | `InitJetCatalogueInjection()` |
-| `jet_patch` | détourne le test « RPS > 200.0f » pour le seul composant `value=500123` | `InitJetExhaustUnlimited()` |
+| `jet_patch` | détourne le test « RPS > 200.0f » pour le seul composant `value=500123` | `InitOverrevPatch()` |
+
+Toutes les adresses proviennent du profil de découverte du loader (rôles moteur)
+ou d'une signature propre au mod résolue par `sw_engine_signature_find`. Les
+écritures de code passent par `sw_hook_inline`, qui valide le prologue, fournit
+le trampoline et restaure le prologue à l'identique.
 
 Le point de jonction est le champ `value` de la définition :
 
@@ -220,7 +226,7 @@ certains caractères accentués comme `É` ; c'est pourquoi les noms affichés
 3. restaure les prologues des deux hooks ;
 4. oublie l'état.
 
-Le loader ne libère **jamais** la mémoire du jeu (ni nos chaînes, ni nos clones).
+Le mod ne libère **jamais** la mémoire du jeu (ni nos chaînes, ni nos clones).
 Les fuites sont bornées et volontaires : un démontage qui ne peut pas fauter vaut
 mieux qu'un `free` avec le mauvais allocateur. Les trampolines ne sont pas
 libérés pour la même raison (un thread du jeu peut encore les exécuter au moment

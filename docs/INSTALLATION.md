@@ -84,7 +84,7 @@ Créer l'arborescence suivante :
         ├── mod.json
         ├── jet_unlimited.dll
         ├── jet_engine_combustion_chamber_unlimited.xml
-        ├── jet_engine_combustion_chamber_unlimited.bin
+        ├── jet_engine_combustion_chamber_unlimited.bin   (asset historique, non requis)
         ├── jet_engine_exhaust_unlimited.xml
         └── README.md
 ```
@@ -169,7 +169,7 @@ désérialisation, avant les pulsations UI.
 set SW_JET_CATALOGUE=0
 ```
 
-Puis relancer le jeu. Le loader ne pose pas les hooks de catalogue ; le composant
+Puis relancer le jeu. Le mod ne pose pas les hooks de catalogue ; le composant
 n'apparaît plus. Le patch de sur-régime reste armé mais ne trouve aucun composant
 `value=500123`, donc il est sans effet visible.
 
@@ -184,8 +184,8 @@ Dans `mods\_modloader.ini` :
 jet_unlimited=0
 ```
 
-Ou décocher le mod dans **MODS**, puis redémarrer. Le loader ne pose alors ni
-hook catalogue ni patch.
+Ou décocher le mod dans **MODS**, puis redémarrer. Le mod ne pose alors ni hook
+catalogue ni patch.
 
 ### 6.3 Bissection
 
@@ -217,7 +217,7 @@ désinstallation est donc une simple suppression de fichiers ajoutés.
 
 ## 8. Vérifications de non-régression
 
-Après une mise à jour du loader ou du mod, depuis StormFabric :
+Après une mise à jour du loader ou du mod, reconstruire puis réinstaller :
 
 ```bat
 cd /d "H:\Bordel 4TO NVME\StormFabric"
