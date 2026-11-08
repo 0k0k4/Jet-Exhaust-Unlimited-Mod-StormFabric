@@ -1,0 +1,17 @@
+{
+  "id": "jet_unlimited",
+  "name": "Jet Exhaust Unlimited",
+  "author": "0k0k4",
+  "version": "1.2.0",
+  "description": "Ajoute une NOUVELLE chambre de combustion jet sans la limite de sur-regime (explosion >200 RPS desactivee pour ce composant uniquement, via signature value=500123). Le composant est injecte en memoire par le loader (clone de la definition vanilla) : aucun fichier n'est ecrit dans rom/ ni %APPDATA%. Les composants vanilla ne sont pas modifies.",
+  "dll": "jet_unlimited.dll",
+  "dependencies": [],
+  "native_deps": [],
+  "enabled_by_default": true,
+  "inject_definitions": [
+    "jet_engine_combustion_chamber_unlimited.xml"
+  ],
+  "inject_components": [
+    "jet_engine_combustion_chamber_unlimited.bin"
+  ]
+}
