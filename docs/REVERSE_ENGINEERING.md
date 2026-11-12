@@ -188,6 +188,12 @@ C'est le crash au shutdown analysé par `tools/crash_dump.py`.
 
 ### 4.4 Champs d'une définition
 
+Largeurs vérifiées sur 1.15.23 (instructions à l'appui dans
+`docs/LAYOUT_DEFINITION.md`) : `flags` fait **8 octets** (`mov [r15],rax` à
+`0x1408efb48`), `value` et `category` 4 octets, `id`/`name` sont des
+`string_t {ptr 8, len 4, cap 4}`. La table ci-dessous est la source de vérité
+recopiée dans `kDefinitionLayout` (`src/jet_catalogue.h`), avec `static_assert`.
+
 | Offset | Type | Rôle |
 |---:|---|---|
 | `+0x40` | `uint8_t` | index de variante |
@@ -198,8 +204,10 @@ C'est le crash au shutdown analysé par `tools/crash_dump.py`.
 | `+0x2a0` | `uint32_t` | longueur du nom |
 | `+0x2a4` | `uint32_t` | capacité du nom |
 | `+0x2a8` | `int32_t` | catégorie |
+| `+0x2ac` | `int32_t` | champ voisin, non utilisé par le clone |
+| `+0x2b0` | `float` | `mass`, non utilisé par le clone |
 | `+0x2b4` | `uint32_t` | `value` (prix) |
-| `+0x2b8` | `uint64_t` | flags |
+| `+0x2b8` | `uint64_t` | flags (8 octets, pas 4) |
 
 ### 4.5 Rings du registre
 

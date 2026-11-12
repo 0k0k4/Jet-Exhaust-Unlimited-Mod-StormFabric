@@ -64,6 +64,66 @@ constexpr uint64_t kEngineDefinitionBytesOld = 0x2848;   // build 1
 constexpr uint64_t kEngineDestroyedTail = 0x2d00;        // build 2
 constexpr uint64_t kEngineDestroyedTailOld = 0x2840;     // build 1
 
+// ---------------------------------------------------------------------------
+// Disposition VÉRIFIÉE des champs du clone sur 1.15.23 (preuves :
+// docs/REVERSE_ENGINEERING.md §4.4 et docs/LAYOUT_DEFINITION.md).
+//
+// Chaque largeur est celle de l'instruction du moteur qui écrit/lit le champ,
+// pas un espacement déduit :
+//   id       string_t {ptr 8, len 4, cap 4}   @0x288
+//   name     string_t {ptr 8, len 4, cap 4}   @0x298
+//   category int32                            @0x2a8
+//   value    int32                            @0x2b4
+//   flags    uint64                           @0x2b8  (`mov [r15],rax`)
+//
+// `flags` fait 8 octets : une écriture 32 bits n'écrase pas le voisin, mais
+// laisse les 4 octets hauts (0x2bc..0x2bf) dans leur état précédent. Le clone
+// doit donc recopier la valeur 64 bits de la source, pas seulement son dword
+// bas. Les static_assert ci-dessous figent cette disposition.
+struct DefinitionFieldLayout {
+    uint32_t idPtr, idLen, idCap;
+    uint32_t namePtr, nameLen, nameCap;
+    uint32_t category;
+    uint32_t value;
+    uint32_t flags;
+    uint32_t flagsBytes;
+};
+constexpr DefinitionFieldLayout kDefinitionLayout = {
+    0x288, 0x290, 0x294,   // id   : string_t
+    0x298, 0x2a0, 0x2a4,   // name : string_t
+    0x2a8,                 // category : int32
+    0x2b4,                 // value    : int32
+    0x2b8, 8,              // flags    : uint64
+};
+static_assert(kDefinitionLayout.idPtr + 8 == kDefinitionLayout.idLen, "id: ptr 8 o puis len");
+static_assert(kDefinitionLayout.idLen + 4 == kDefinitionLayout.idCap, "id: len puis cap");
+static_assert(kDefinitionLayout.idCap + 4 == kDefinitionLayout.namePtr, "id puis name contigus");
+static_assert(kDefinitionLayout.namePtr + 8 == kDefinitionLayout.nameLen, "name: ptr 8 o puis len");
+static_assert(kDefinitionLayout.nameLen + 4 == kDefinitionLayout.nameCap, "name: len puis cap");
+static_assert(kDefinitionLayout.nameCap + 4 == kDefinitionLayout.category, "name puis category contigus");
+static_assert(kDefinitionLayout.value + 4 == kDefinitionLayout.flags, "value 4 o juste avant flags");
+static_assert(kDefinitionLayout.flagsBytes == 8, "flags fait 8 octets (mov [r15],rax)");
+static_assert(kDefinitionLayout.flags + kDefinitionLayout.flagsBytes == 0x2c0,
+              "flags occupe 0x2b8..0x2c0");
+static_assert(kDefinitionLayout.flags + kDefinitionLayout.flagsBytes <= kEngineDefinitionBytes,
+              "flags tient dans une definition");
+
+// Valeurs écrites dans le clone. Les largeurs sont portées par les types :
+// `flags` est un uint64_t, jamais un uint32_t.
+struct CloneFieldValues {
+    const char* id;
+    uint32_t idLen, idCap;
+    const char* name;
+    uint32_t nameLen, nameCap;
+    int32_t category;
+    uint32_t value;
+    uint64_t flags;
+};
+// Écrit les champs du clone à leurs offsets/largeurs certifiés. Fonction PURE
+// (aucun accès moteur) : les tests hors jeu vérifient qu'aucun octet voisin
+// n'est touché et que `flags` est bien écrit sur 8 octets.
+void JetCatalogueWriteCloneFields(uint8_t* dst, const CloneFieldValues& values);
+
 // Taille d'une définition et décalage du dernier champ détruit, par build
 // (1 ou 2, identité fournie par le profil du loader). Les deux builds n'ont PAS
 // la même disposition : coder une seule valeur en dur produit un crash.

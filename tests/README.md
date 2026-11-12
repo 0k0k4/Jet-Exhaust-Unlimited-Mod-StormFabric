@@ -11,6 +11,8 @@ Couverture :
 - croissance de ring (`kAllocate` seulement pour `cap == 0`, realloc refusé) ;
 - injection à la demande (`LazyPlan` / `LazyOutcome` / ré-injection après Clear) ;
 - géométrie du clone (chevauchement interdit, tailles par build) ;
+- largeurs des champs du clone (`flags` 8 octets, `value`/`category` 4 octets,
+  octets voisins intacts — voir `docs/LAYOUT_DEFINITION.md`) ;
 - cohérence des chaînes moteur ;
 - encodage du saut absolu.
 

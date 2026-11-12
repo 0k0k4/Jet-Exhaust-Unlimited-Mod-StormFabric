@@ -53,11 +53,21 @@ constexpr size_t kVariants = 8;
 size_t g_definitionBytes = kDefinitionBytesNew;  // NOLINT : état de module, comme g_cat
 static_assert(kDefinitionBytesNew >= 0x2d00 + 8, "une definition doit couvrir ses champs detruits (+0x2D00)");
 constexpr size_t kOffVariantIndex = 0x40;
-constexpr size_t kOffId = 0x288, kOffIdLen = 0x290, kOffIdCap = 0x294;
-constexpr size_t kOffName = 0x298, kOffNameLen = 0x2a0, kOffNameCap = 0x2a4;
-constexpr size_t kOffCategory = 0x2a8;
-constexpr size_t kOffValue = 0x2b4;
-constexpr size_t kOffFlags = 0x2b8;
+// Offsets dérivés de la table de disposition certifiée (jet_catalogue.h) :
+// une seule source de vérité, donc aucun risque de divergence entre la lecture
+// de la source et l'écriture du clone.
+constexpr size_t kOffId = kDefinitionLayout.idPtr;
+constexpr size_t kOffIdLen = kDefinitionLayout.idLen;
+constexpr size_t kOffIdCap = kDefinitionLayout.idCap;
+constexpr size_t kOffName = kDefinitionLayout.namePtr;
+constexpr size_t kOffNameLen = kDefinitionLayout.nameLen;
+constexpr size_t kOffNameCap = kDefinitionLayout.nameCap;
+constexpr size_t kOffCategory = kDefinitionLayout.category;
+constexpr size_t kOffValue = kDefinitionLayout.value;
+constexpr size_t kOffFlags = kDefinitionLayout.flags;
+static_assert(kOffFlags == 0x2b8, "offset flags certifie sur 1.15.23");
+static_assert(kDefinitionLayout.flagsBytes == sizeof(uint64_t),
+              "flags doit etre ecrit en 64 bits");
 // Dernier champ touché par le destructeur de définition (0x87FDB0 libère
 // [def+0x2CE8] et [def+0x2CF8], puis écrit [def+0x2CF0] / [def+0x2D00]) : ce
 // champ DOIT tenir dans une variante, sinon la destruction déborde sur la
@@ -656,16 +666,18 @@ PrepareResult PrepareDefinition(void* reg) {
             StrMake(id, kComponentId);
             StrMake(name, kComponentName);
             if (!id.data || !name.data) { ok = false; break; }
-            *reinterpret_cast<char**>(dst + kOffId) = id.data;
-            *reinterpret_cast<uint32_t*>(dst + kOffIdLen) = id.len;
-            *reinterpret_cast<uint32_t*>(dst + kOffIdCap) = id.cap;
-            *reinterpret_cast<char**>(dst + kOffName) = name.data;
-            *reinterpret_cast<uint32_t*>(dst + kOffNameLen) = name.len;
-            *reinterpret_cast<uint32_t*>(dst + kOffNameCap) = name.cap;
+            CloneFieldValues fields{};
+            fields.id = id.data;
+            fields.idLen = id.len;
+            fields.idCap = id.cap;
+            fields.name = name.data;
+            fields.nameLen = name.len;
+            fields.nameCap = name.cap;
+            fields.category = category;
+            fields.value = kSignatureValue;
+            fields.flags = flags;   // uint64_t : le champ moteur fait 8 octets
+            JetCatalogueWriteCloneFields(dst, fields);
             *reinterpret_cast<uint8_t*>(dst + kOffVariantIndex) = static_cast<uint8_t>(k);
-            *reinterpret_cast<int32_t*>(dst + kOffCategory) = category;
-            *reinterpret_cast<uint32_t*>(dst + kOffValue) = kSignatureValue;
-            *reinterpret_cast<uint64_t*>(dst + kOffFlags) = flags;
         }
         if (ok) {
             g_cat.builtFor = reg;
@@ -1336,6 +1348,26 @@ void ShutdownJetCatalogueInjection() {
 // chaque variante sur la suivante : détruire la variante k libère alors des
 // champs de la variante k+1 -> double free et pointeur bidon dans _aligned_free
 // (crash au shutdown). C'est exactement ce que testent ces deux fonctions.
+void JetCatalogueWriteCloneFields(uint8_t* dst, const CloneFieldValues& v) {
+    if (!dst) return;
+    const DefinitionFieldLayout& L = kDefinitionLayout;
+    // string_t id : {ptr 8, len 4, cap 4}
+    *reinterpret_cast<const char**>(dst + L.idPtr) = v.id;
+    *reinterpret_cast<uint32_t*>(dst + L.idLen) = v.idLen;
+    *reinterpret_cast<uint32_t*>(dst + L.idCap) = v.idCap;
+    // string_t name : {ptr 8, len 4, cap 4}
+    *reinterpret_cast<const char**>(dst + L.namePtr) = v.name;
+    *reinterpret_cast<uint32_t*>(dst + L.nameLen) = v.nameLen;
+    *reinterpret_cast<uint32_t*>(dst + L.nameCap) = v.nameCap;
+    // category / value : int32 (le moteur les lit avec MOVSXD / MOV dword).
+    *reinterpret_cast<int32_t*>(dst + L.category) = v.category;
+    *reinterpret_cast<uint32_t*>(dst + L.value) = v.value;
+    // flags : uint64. Le moteur écrit ce champ avec `mov [r15],rax` (8 octets)
+    // et le lit avec `mov rax,[def+0x2b8]` (0x46ec30) ; un store 32 bits
+    // laisserait 0x2bc..0x2bf inchangés. On recopie donc la valeur 64 bits.
+    *reinterpret_cast<uint64_t*>(dst + L.flags) = v.flags;
+}
+
 CloneGeometry JetCatalogueCloneGeometry(uint64_t variantBytes, uint32_t variants,
                                        uint64_t destroyedTail) {
     CloneGeometry g{};

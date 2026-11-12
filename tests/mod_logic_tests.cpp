@@ -136,6 +136,68 @@ void TestStringCoherence() {
     puts("PASS: coherence des chaines moteur");
 }
 
+void TestCloneFieldWidths() {
+    // Disposition certifiée sur 1.15.23 (preuves : docs/LAYOUT_DEFINITION.md).
+    const auto& L = jet::kDefinitionLayout;
+    assert(L.idPtr == 0x288 && L.idLen == 0x290 && L.idCap == 0x294);
+    assert(L.namePtr == 0x298 && L.nameLen == 0x2a0 && L.nameCap == 0x2a4);
+    assert(L.category == 0x2a8);
+    assert(L.value == 0x2b4);
+    assert(L.flags == 0x2b8 && L.flagsBytes == 8);
+
+    uint8_t buf[jet::kEngineDefinitionBytes];
+    memset(buf, 0xA5, sizeof(buf));
+    const char id[] = "jet_engine_combustion_chamber_unlimited";
+    const char name[] = "Jet Combustion Chamber Unlimited";
+    jet::CloneFieldValues v{};
+    v.id = id; v.idLen = sizeof(id) - 1; v.idCap = 64;
+    v.name = name; v.nameLen = sizeof(name) - 1; v.nameCap = 64;
+    v.category = 11;
+    v.value = 500123;
+    v.flags = 0x4000ull;   // flags vanilla de la source (16384)
+    jet::JetCatalogueWriteCloneFields(buf, v);
+
+    auto u32 = [&](size_t off) { uint32_t x; memcpy(&x, buf + off, 4); return x; };
+    auto u64 = [&](size_t off) { uint64_t x; memcpy(&x, buf + off, 8); return x; };
+    auto ptr = [&](size_t off) { const char* x; memcpy(&x, buf + off, 8); return x; };
+
+    // string_t id / name : pointeur 8 o, len et cap 4 o.
+    assert(ptr(L.idPtr) == id);
+    assert(u32(L.idLen) == v.idLen && u32(L.idCap) == v.idCap);
+    assert(ptr(L.namePtr) == name);
+    assert(u32(L.nameLen) == v.nameLen && u32(L.nameCap) == v.nameCap);
+
+    // category : 4 octets ; le champ suivant (0x2ac, non utilisé par le clone)
+    // reste intact.
+    assert(static_cast<int32_t>(u32(L.category)) == 11);
+    for (size_t i = L.category + 4; i < L.value; ++i) assert(buf[i] == 0xA5);
+
+    // value : 4 octets, immédiatement suivi de flags.
+    assert(u32(L.value) == 500123u);
+
+    // flags : 8 octets écrits, y compris les 4 octets hauts (0x2bc..0x2bf).
+    assert(u64(L.flags) == 0x4000ull);
+    for (size_t i = 0; i < 8; ++i)
+        assert(buf[L.flags + i] == static_cast<uint8_t>((0x4000ull >> (8 * i)) & 0xFF));
+    // Le voisin immédiat (0x2c0) n'est pas touché.
+    for (size_t i = L.flags + L.flagsBytes; i < L.flags + L.flagsBytes + 16; ++i)
+        assert(buf[i] == 0xA5);
+
+    // RÉGRESSION : un store 32 bits laisserait 0x2bc..0x2bf à leur valeur
+    // précédente (ici la sentinelle). C'est exactement ce que ce test interdit.
+    uint8_t partial[jet::kEngineDefinitionBytes];
+    memset(partial, 0xA5, sizeof(partial));
+    const uint32_t low = 0x4000u;
+    memcpy(partial + L.flags, &low, 4);
+    for (size_t i = 4; i < 8; ++i) assert(partial[L.flags + i] == 0xA5);
+
+    // Une valeur dont les octets hauts sont non nuls est recopiée intégralement.
+    v.flags = 0x1122334455667788ull;
+    jet::JetCatalogueWriteCloneFields(buf, v);
+    assert(u64(L.flags) == 0x1122334455667788ull);
+    puts("PASS: largeurs des champs du clone (flags 8 o, value/category 4 o, voisins intacts)");
+}
+
 void TestBuildJump() {
     uint8_t patch[24];
     uint8_t target = 0;
@@ -157,6 +219,7 @@ int main() {
     TestLazyInjection();
     TestCloneGeometry();
     TestStringCoherence();
+    TestCloneFieldWidths();
     TestBuildJump();
     puts("PASS: mod logic suites");
     return 0;

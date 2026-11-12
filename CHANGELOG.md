@@ -9,6 +9,22 @@ plus aucun code propre à ce mod ; il expose des primitives natives génériques
 
 ---
 
+## [Unreleased]
+
+### Vérifié / durci
+
+- **Largeur de `flags` (`+0x2b8`) certifiée à 8 octets** sur 1.15.23 :
+  écriture `mov qword ptr [r15],rax` (`0x1408efb48`), lecture 64 bits dans
+  l'enregistrement de bucket (`0x14046ec9c`), lecture 32 bits du dword bas dans
+  `ComponentRegistry::Clear` (`0x14046e7d6`). Preuves et instructions dans
+  `docs/LAYOUT_DEFINITION.md`.
+- Disposition des champs du clone centralisée dans `kDefinitionLayout`
+  (`src/jet_catalogue.h`) avec `static_assert` sur chaque offset/largeur ;
+  l'écriture des champs passe par `JetCatalogueWriteCloneFields` (pure).
+- Test `TestCloneFieldWidths` : sentinelle sur un buffer de `0x2d08` octets,
+  vérifie que `flags` écrit bien 8 octets, que `+0x2c0` reste intact et qu'un
+  store 32 bits laisserait `+0x2bc..+0x2bf` inchangés.
+
 ## [2.0.0] — 2026-11-09
 
 ### Architecture
