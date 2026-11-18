@@ -1,7 +1,7 @@
 # Changelog — Jet Exhaust Unlimited
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
-Version du mod : `2.0.0` (celle de `mod/jet_unlimited/mod.json`).
+Version du mod : `2.0.1` (celle de `mod/jet_unlimited/mod.json`).
 
 Le mod est **autonome** : tout le code de hook est compilé dans
 `jet_unlimited.dll` (sources `src/jet_*.cpp`). Le loader StormFabric ne contient
@@ -10,6 +10,18 @@ plus aucun code propre à ce mod ; il expose des primitives natives génériques
 ---
 
 ## [Unreleased]
+
+## [2.0.1] — 2026-11-18
+
+### Corrigé
+
+- **Le composant disparaissait de l'établi** quand un véhicule posé sur la carte
+  y était ramené (sans erreur ; un rechargement le faisait revenir). Le jeu vide
+  alors un registre de composants secondaire, et le hook de
+  `ComponentRegistry::Clear` retirait aussi nos entrées du registre principal,
+  toujours vivant. Seul le registre réellement vidé est désormais balayé, et
+  l'état d'injection est conservé tant que nos entrées sont dans le registre
+  principal.
 
 ### Vérifié / durci
 
