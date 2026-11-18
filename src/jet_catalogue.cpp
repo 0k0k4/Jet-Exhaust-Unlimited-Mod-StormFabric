@@ -1048,15 +1048,29 @@ void HookedClear(void* registry) {
     g_cat.clearing = true;                     // M6 : HookedFindDef refuse d'injecter
     const void* injectedInto = g_cat.registry;
     const bool same = registry && registry == injectedInto;
-    size_t removed = SweepRegistry(registry);
-    // Le registre mémorisé n'est balayé que si l'on croit y avoir des entrées :
-    // sinon ce pointeur peut désigner un objet déjà libéré (monde détruit).
-    if (!same && injectedInto && g_cat.registered) removed += SweepRegistry(g_cat.registry);
+    // Seul le registre RÉELLEMENT vidé est balayé. Balayer aussi le registre mémorisé
+    // (ancien comportement) retirait le composant du registre VIVANT quand le jeu vidait
+    // un registre secondaire : au retour d'un véhicule de la carte vers l'établi, le jeu
+    // vide un autre registre puis relit le véhicule dans le registre principal, sans
+    // lookup de notre id -> le composant disparaissait du build (mesuré le 2026-11-18 :
+    // Clear(…09470) retirait 11 entrées de …CC570).
+    const size_t removed = SweepRegistry(registry);
     if (removed || g_cat.registered || !same)
         LogInfo("Jet: entrees retirees avant ComponentRegistry::Clear "
                 "(registre=%p, injection=%p, identiques=%d, %zu entree(s))",
                 registry, injectedInto, same ? 1 : 0, removed);
     if (g_cat.originalClear) g_cat.originalClear(registry);
+    // Registre secondaire vidé alors que notre registre d'injection contient toujours
+    // nos entrées : l'état d'injection reste valable, on n'oublie rien (le clone et le
+    // descripteur sont toujours publiés dans ce registre). Lecture seule sous SEH.
+    if (!same && injectedInto && g_cat.registered && RingHasId(g_cat.registry, kOffRing, false)) {
+        if (g_cat.builtFor == registry) g_cat.builtFor = g_cat.registry;
+        LogInfo("Jet: Clear d'un registre secondaire (%p) ; composant conserve dans %p",
+                registry, injectedInto);
+        g_cat.clearing = false;
+        LockRelease();
+        return;
+    }
     // Le moteur vient de vider les rings. Le registre vit DANS l'objet monde
     // (monde+0xbb670) : au CHARGEMENT d'un monde, Clear() est appelé puis les
     // définitions sont rechargées — garder le pointeur permet donc à la
