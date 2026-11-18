@@ -59,13 +59,9 @@ codée en dur : le mod compile sans copie des sources du loader.
    `...\Stormworks\iphlpapi.dll`
 2. Copier le dossier `mod/jet_unlimited/` dans :
    `...\Stormworks\mods\jet_unlimited\`
-3. Vérifier `...\Stormworks\mods\_modloader.ini` :
-
-   ```ini
-   jet_unlimited=1
-   ```
-
-4. Lancer le jeu. Le composant apparaît dans l'atelier, onglet **JET ENGINES**.
+3. Lancer le jeu. Le mod est actif par défaut ; il s'active ou se désactive dans
+   le menu **MODS** du jeu. Le composant apparaît dans l'atelier, onglet
+   **JET ENGINES**.
 
 Le dossier `mod/jet_unlimited/` contient `mod.json`, `jet_unlimited.dll`, le XML de
 la définition et le `.bin` historique (conservé comme asset de référence ; il n'est
@@ -73,7 +69,7 @@ plus nécessaire à l'injection, qui clone la définition vanilla en mémoire).
 
 ## Désinstallation
 
-- Supprime `mods/jet_unlimited/` et la ligne `jet_unlimited=1`.
+- Désactive le mod dans le menu **MODS**, ou supprime `mods/jet_unlimited/`.
 - Pour couper seulement l'injection du composant, sans rien supprimer :
 
   ```bat

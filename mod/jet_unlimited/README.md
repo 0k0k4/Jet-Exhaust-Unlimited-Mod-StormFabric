@@ -29,14 +29,9 @@ testée par le stub machine du mod.
    ```
 
 2. Copier ce dossier dans `<Stormworks>\mods\jet_unlimited\` (la DLL y est déjà).
-3. Vérifier `mods\_modloader.ini` :
-
-   ```ini
-   jet_unlimited=1
-   ```
-
-4. Lancer le jeu. Le composant **Jet Combustion Chamber Unlimited** apparaît
-   dans **JET ENGINES**.
+3. Lancer le jeu. Le mod est actif par défaut ; il s'active ou se désactive dans
+   le menu **MODS** du jeu. Le composant **Jet Combustion Chamber Unlimited**
+   apparaît dans **JET ENGINES**.
 
 ## Ce que fait le mod
 
@@ -56,8 +51,7 @@ native générique (`sw_hook_inline`, `sw_engine_symbol_find`, `sw_memory_*`,
 
 - `SW_JET_CATALOGUE=0` : désactive l'injection catalogue (le composant
   n'apparaît pas) ;
-- `jet_unlimited=0` dans `mods\_modloader.ini` : désactive tout le mod (aucun
-  hook, aucun patch) ;
+- menu **MODS** du jeu : désactive tout le mod (aucun hook, aucun patch) ;
 - fichier `.no_catalogue_injection` dans ce dossier : désactive uniquement
   l'insertion au catalogue.
 
