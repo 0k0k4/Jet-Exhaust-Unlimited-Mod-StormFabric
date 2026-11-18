@@ -19,8 +19,8 @@ struct PatchState {
 };
 PatchState g_patch;
 
-// Petit émetteur : les déplacements RIP-relatifs sont calculés sur les offsets
-// finaux, donc le bloc est identique et testable hors jeu.
+// Small emitter: the RIP-relative displacements are computed on the final
+// offsets, so the block is always the same and testable off-game.
 size_t EmitStub(uint8_t* out, uint32_t signature, float hugeLimit, float vanillaLimit,
                 void* resume) {
     constexpr size_t kVanilla = 71;
@@ -44,7 +44,7 @@ size_t EmitStub(uint8_t* out, uint32_t signature, float hugeLimit, float vanilla
     out[o++] = 0xF3; out[o++] = 0x0F; out[o++] = 0x10; out[o++] = 0x35;  // movss xmm6,[rip+huge]
     d = static_cast<int32_t>(kHuge - (o + 4));
     memcpy(out + o, &d, 4); o += 4;
-    // .go : reproduit EXACTEMENT les instructions remplacées (XMM0 = RPS).
+    // .go: replays EXACTLY the replaced instructions (XMM0 = RPS).
     out[o++] = 0xF3; out[o++] = 0x0F; out[o++] = 0x10;
     out[o++] = 0x87; out[o++] = 0xBC; out[o++] = 0x01; out[o++] = 0x00; out[o++] = 0x00;
     out[o++] = 0x0F; out[o++] = 0x2F; out[o++] = 0xC6;         // comiss xmm0,xmm6
@@ -62,7 +62,7 @@ size_t EmitStub(uint8_t* out, uint32_t signature, float hugeLimit, float vanilla
 void BuildSiteMask(uint8_t* mask) {
     if (!mask) return;
     memset(mask, 0xFF, kSiteSignatureSize);
-    // movss xmm6,[rip+rel32] : opérande à +12..+15 ; jbe rel32 : opérande à +20..+23.
+    // movss xmm6,[rip+rel32]: operand at +12..+15; jbe rel32: operand at +20..+23.
     memset(mask + 12, 0x00, 4);
     memset(mask + 20, 0x00, 4);
 }
@@ -84,14 +84,14 @@ bool InitOverrevPatch(const SwModHost* host) {
     const SwResult search = native->findSignature(host, kSiteSignature, mask,
                                                  kSiteSignatureSize, &found);
     if (search != SW_OK || !found) {
-        LogError("Sur-regime: signature du site %s ; aucun patch",
-                 search == SW_CONFLICT ? "ambigue (plusieurs occurrences)" : "absente");
+        LogError("Over-rev: site signature %s; no patch",
+                 search == SW_CONFLICT ? "ambiguous (several matches)" : "not found");
         return false;
     }
     uint8_t* site = const_cast<uint8_t*>(static_cast<const uint8_t*>(found));
 
-    // Constante 200.0f réellement pointée par le movss : refuse un site dont la
-    // sémantique aurait changé (fail-closed, avant toute écriture).
+    // The 200.0f constant really pointed to by the movss: refuse a site whose
+    // meaning would have changed (fail-closed, before any write).
     uint8_t operand[4];
     if (native->readMemory(host, site + 12, operand, sizeof(operand)) != SW_OK) return false;
     int32_t displacement = 0;
@@ -100,7 +100,7 @@ bool InitOverrevPatch(const SwModHost* host) {
     if (native->readMemory(host, site + 16 + displacement, &limitBits, sizeof(limitBits)) != SW_OK)
         return false;
     if (limitBits != kExpectedLimitBits) {
-        LogError("Sur-regime: constante du site inattendue (0x%08X) ; aucun patch", limitBits);
+        LogError("Over-rev: unexpected site constant (0x%08X); no patch", limitBits);
         return false;
     }
     float vanillaLimit = 0.0f;
@@ -108,7 +108,7 @@ bool InitOverrevPatch(const SwModHost* host) {
 
     void* stub = native->codeAllocNear(host, site, kStubBlockBytes);
     if (!stub) {
-        LogError("Sur-regime: allocation du stub executable impossible ; aucun patch");
+        LogError("Over-rev: could not allocate the executable stub; no patch");
         return false;
     }
     uint8_t code[kStubBlockBytes];
@@ -116,11 +116,11 @@ bool InitOverrevPatch(const SwModHost* host) {
                      site + kPatchBytes) != kStubBlockBytes ||
         native->writeMemory(host, stub, code, kStubBlockBytes) != SW_OK) {
         native->codeFree(host, stub);
-        LogError("Sur-regime: stub refuse ; aucun patch");
+        LogError("Over-rev: stub refused; no patch");
         return false;
     }
 
-    // Contrat exact : les 19 octets lus sont ceux que le hook va remplacer.
+    // Exact contract: the 19 bytes read are the ones the hook will replace.
     uint8_t expected[kPatchBytes];
     if (native->readMemory(host, site, expected, sizeof(expected)) != SW_OK) {
         native->codeFree(host, stub);
@@ -130,7 +130,7 @@ bool InitOverrevPatch(const SwModHost* host) {
     SwHandle handle = 0;
     if (native->hookInline(host, site, stub, expected, kPatchBytes, &trampoline, &handle) != SW_OK) {
         native->codeFree(host, stub);
-        LogError("Sur-regime: pose du hook refusee par l'API native ; aucun patch");
+        LogError("Over-rev: hook refused by the native API; no patch");
         return false;
     }
     g_patch.host = host;
@@ -138,7 +138,7 @@ bool InitOverrevPatch(const SwModHost* host) {
     g_patch.stub = stub;
     g_patch.handle = handle;
     g_patch.active = true;
-    LogInfo("Sur-regime: patch installe (site=%p, stub=%p, seuil vanilla %.1f)",
+    LogInfo("Over-rev: patch installed (site=%p, stub=%p, vanilla limit %.1f)",
             (void*)site, stub, vanillaLimit);
     return true;
 }
@@ -150,7 +150,7 @@ void ShutdownOverrevPatch() {
     if (g_engine.native && g_engine.host && g_patch.stub)
         g_engine.native->codeFree(g_engine.host, g_patch.stub);
     g_patch = PatchState{};
-    LogInfo("Sur-regime: prologue original restaure");
+    LogInfo("Over-rev: original prologue restored");
 }
 
 bool OverrevPatchActive() { return g_patch.active; }

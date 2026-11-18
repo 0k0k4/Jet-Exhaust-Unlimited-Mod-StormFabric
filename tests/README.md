@@ -1,37 +1,37 @@
-# Tests du mod
+# Mod tests
 
-`mod_logic_tests.cpp` vérifie uniquement la **logique pure** du mod : aucune
-exécution de code du jeu, aucun hook réel.
+`mod_logic_tests.cpp` checks only the mod's **pure logic**: no game code runs,
+no real hook is installed.
 
-Couverture :
+Coverage:
 
-- masque de la signature du site de sur-régime (rel32 jokers, octets fixes) ;
-- encodage machine du stub (`value` en imm32, `definition+0x2b4`, constantes
-  `200.0f` / `+inf`, saut absolu vers `site+19`) ;
-- croissance de ring (`kAllocate` seulement pour `cap == 0`, realloc refusé) ;
-- injection à la demande (`LazyPlan` / `LazyOutcome` / ré-injection après Clear) ;
-- géométrie du clone (chevauchement interdit, tailles par build) ;
-- largeurs des champs du clone (`flags` 8 octets, `value`/`category` 4 octets,
-  octets voisins intacts — voir `docs/LAYOUT_DEFINITION.md`) ;
-- cohérence des chaînes moteur ;
-- encodage du saut absolu.
+- mask of the over-rev site signature (rel32 wildcards, fixed bytes);
+- machine encoding of the stub (`value` as imm32, `definition+0x2b4`, `200.0f` /
+  `+inf` constants, absolute jump to `site+19`);
+- ring growth (`kAllocate` only for `cap == 0`, realloc refused);
+- on-demand injection (`LazyPlan` / `LazyOutcome` / reinjection after Clear);
+- clone geometry (overlap forbidden, sizes per build);
+- clone field widths (`flags` 8 bytes, `value`/`category` 4 bytes, neighbouring
+  bytes intact — see `docs/LAYOUT_DEFINITION.md`);
+- engine string coherence;
+- absolute jump encoding.
 
-## Lancer
+## Running
 
 ```bat
-cd /d "H:\Bordel 4TO NVME\Jet Exhaust Unlimited Mod StormFabric"
+cd /d "<path to the Jet Exhaust Unlimited repository>"
 cmd /c ".\tests\run_tests.bat"
 ```
 
-Attendu : `All mod logic tests passed.`
+Expected: `All mod logic tests passed.`
 
-Le SDK StormFabric doit être présent dans un checkout voisin
-(`..\StormFabric\include`) ou passé en argument :
+The StormFabric SDK must be in a sibling checkout (`..\StormFabric\include`) or
+passed as an argument:
 
 ```bat
-cmd /c ".\tests\run_tests.bat" "H:\chemin\vers\StormFabric\include"
+cmd /c ".\tests\run_tests.bat" "<path to StormFabric>\include"
 ```
 
-Les primitives du **loader** (contrat de signature trouvé/absent/ambigu,
-hook/restore, refus d'écriture) sont testées dans StormFabric :
-`tests\run_tests.bat` (suite `native_prims_tests`).
+The **loader** primitives (signature contract found/missing/ambiguous,
+hook/restore, write refusal) are tested in StormFabric: `tests\run_tests.bat`
+(`native_prims_tests` suite).

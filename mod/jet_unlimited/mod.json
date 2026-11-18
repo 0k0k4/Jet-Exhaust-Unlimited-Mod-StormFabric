@@ -3,7 +3,7 @@
   "name": "Jet Exhaust Unlimited",
   "author": "0k0k4",
   "version": "2.0.1",
-  "description": "Ajoute une NOUVELLE chambre de combustion jet sans la limite de sur-regime (explosion >200 RPS desactivee pour ce composant uniquement, identifie par value=500123). Le mod est AUTONOME : il porte toute sa logique et n'utilise que les primitives natives generiques du loader StormFabric. Le composant est injecte en memoire (clone de la definition vanilla), a la demande, dans le hook de lookup du moteur : aucun fichier n'est ecrit dans rom/ ni %APPDATA%. Les composants vanilla ne sont pas modifies.",
+  "description": "Adds a NEW jet combustion chamber without the over-rev limit (the >200 RPS explosion is disabled for this component only, identified by value=500123). The mod is SELF-CONTAINED: it carries all of its logic and only uses the generic native primitives of the StormFabric loader. The component is injected in memory (clone of the vanilla definition), on demand, in the engine's lookup hook: nothing is written to rom/ or %APPDATA%. Vanilla components are not modified.",
   "dll": "jet_unlimited.dll",
   "dependencies": [],
   "native_deps": [],

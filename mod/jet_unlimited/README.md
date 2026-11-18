@@ -1,62 +1,62 @@
-# Jet Exhaust Unlimited — dossier du mod
+# Jet Exhaust Unlimited — mod folder
 
-Ce dossier est le contenu à copier dans `<Stormworks>\mods\jet_unlimited\`.
-Il ne contient **aucun fichier de définition officiel** : la DLL du mod clone la
-définition vanilla **en mémoire** et l'insère dans le catalogue du jeu.
+This folder is what goes into `<Stormworks>\mods\jet_unlimited\`.
+It contains **no official definition file**: the mod's DLL clones the vanilla
+definition **in memory** and inserts it into the game's catalogue.
 
-## Fichiers
+## Files
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `mod.json` | manifeste du mod (id, DLL, activation par défaut) |
-| `jet_unlimited.dll` | DLL du mod, **autonome** (produite par `build_mod.bat`) |
-| `jet_engine_combustion_chamber_unlimited.xml` | définition fonctionnelle de la chambre sans limite de sur-régime (lue par le mod pour le descripteur) |
-| `jet_engine_combustion_chamber_unlimited.bin` | composant compilé historique — **non requis** par l'injection en mémoire |
-| `jet_engine_exhaust_unlimited.xml` | variante cosmétique d'échappement (non fonctionnelle pour le bypass) |
-| `README.md` | ce fichier |
+| `mod.json` | mod manifest (id, DLL, enabled by default) |
+| `jet_unlimited.dll` | the mod's DLL, **self-contained** (built by `build_mod.bat`) |
+| `jet_engine_combustion_chamber_unlimited.xml` | working definition of the chamber without the over-rev limit (read by the mod for the descriptor) |
+| `jet_engine_combustion_chamber_unlimited.bin` | historical compiled component — **not needed** by the in-memory injection |
+| `jet_engine_exhaust_unlimited.xml` | cosmetic exhaust variant (plays no part in the bypass) |
+| `README.md` | this file |
 
-Il n'y a **pas de `mod.sig`**. La signature du composant est la constante
-`value="500123"` du XML, recopiée dans le champ `value` de la définition et
-testée par le stub machine du mod.
+There is **no `mod.sig`**. The component's signature is the `value="500123"`
+constant of the XML, copied into the definition's `value` field and tested by
+the mod's machine-code stub.
 
 ## Installation
 
-1. Compiler la DLL du mod depuis le dépôt du mod :
+1. Build the mod's DLL from the mod repository:
 
    ```bat
-   cd /d "H:\Bordel 4TO NVME\Jet Exhaust Unlimited Mod StormFabric"
+   cd /d "<path to the Jet Exhaust Unlimited repository>"
    cmd /c ".\build_mod.bat"
    ```
 
-2. Copier ce dossier dans `<Stormworks>\mods\jet_unlimited\` (la DLL y est déjà).
-3. Lancer le jeu. Le mod est actif par défaut ; il s'active ou se désactive dans
-   le menu **MODS** du jeu. Le composant **Jet Combustion Chamber Unlimited**
-   apparaît dans **JET ENGINES**.
+2. Copy this folder to `<Stormworks>\mods\jet_unlimited\` (the DLL is already in it).
+3. Start the game. The mod is enabled by default; it is turned on or off in the
+   game's **MODS** menu. The **Jet Combustion Chamber Unlimited** component shows
+   up in **JET ENGINES**.
 
-## Ce que fait le mod
+## What the mod does
 
-- il clone la définition vanilla `jet_engine_combustion_chamber` en mémoire ;
-- il remplace id/nom/catégorie/`value` et insère le clone dans les rings du
-  catalogue **à la demande**, dans le hook de lookup du moteur ;
-- il ré-arme l'injection après `ComponentRegistry::Clear` (retour à l'atelier) ;
-- il détourne le test `200.0f < RPS` uniquement pour `value == 500123` ;
-- il restaure tout à la fermeture (`SwModUnload`, puis déchargement de la DLL).
+- it clones the vanilla `jet_engine_combustion_chamber` definition in memory;
+- it replaces id/name/category/`value` and inserts the clone into the catalogue
+  rings **on demand**, in the engine's lookup hook;
+- it re-arms the injection after `ComponentRegistry::Clear` (back to the workbench);
+- it diverts the `200.0f < RPS` test only for `value == 500123`;
+- it restores everything on exit (`SwModUnload`, then the DLL is unloaded).
 
-Le composant vanilla n'est pas modifié : il explose toujours au-delà de 200 RPS.
-Le loader StormFabric ne contient aucun code de ce mod : le mod utilise son API
-native générique (`sw_hook_inline`, `sw_engine_symbol_find`, `sw_memory_*`,
+The vanilla component is not modified: it still explodes above 200 RPS.
+The StormFabric loader contains no code from this mod: the mod uses its generic
+native API (`sw_hook_inline`, `sw_engine_symbol_find`, `sw_memory_*`,
 `sw_game_alloc`, `sw_engine_string_make`, …).
 
-## Désactivation
+## Disabling
 
-- `SW_JET_CATALOGUE=0` : désactive l'injection catalogue (le composant
-  n'apparaît pas) ;
-- menu **MODS** du jeu : désactive tout le mod (aucun hook, aucun patch) ;
-- fichier `.no_catalogue_injection` dans ce dossier : désactive uniquement
-  l'insertion au catalogue.
+- `SW_JET_CATALOGUE=0`: turns off the catalogue injection (the component does
+  not show up);
+- the game's **MODS** menu: turns off the whole mod (no hook, no patch);
+- a `.no_catalogue_injection` file in this folder: turns off only the catalogue
+  insertion.
 
-## Voir aussi
+## See also
 
-- `../../README.md` — vue d'ensemble, compilation, installation ;
-- `../../docs/INSTALLATION.md` — guide complet ;
-- `../../docs/FONCTIONNEMENT.md` — mécanismes internes.
+- `../../README.md` — overview, building, installation;
+- `../../docs/INSTALLATION.md` — full guide;
+- `../../docs/HOW_IT_WORKS.md` — internals.

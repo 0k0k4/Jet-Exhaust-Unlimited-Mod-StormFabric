@@ -1,257 +1,214 @@
 # Installation — Jet Exhaust Unlimited
 
-Guide pas à pas pour installer, vérifier et désinstaller le mod avec le loader
-StormFabric.
+Step-by-step guide to install, check and uninstall the mod with the StormFabric
+loader.
 
 ---
 
-## 1. Pré-requis
+## 1. Requirements
 
-| Élément | Valeur |
+| Item | Value |
 |---|---|
-| Jeu | Stormworks: Build and Rescue, Windows x64 |
-| Builds supportés | **1.15.23** (`f9206d85…`) et **1.15.18** (`55914301…`) |
-| Loader | StormFabric compilé (`iphlpapi.dll`) |
-| DLL du mod | `jet_unlimited.dll` compilée en x64 |
-| Accès | écriture dans le dossier du jeu |
+| Game | Stormworks: Build and Rescue, Windows x64 |
+| Supported builds | **1.15.23** (`f9206d85…`) and **1.15.18** (`55914301…`) |
+| Loader | built StormFabric (`iphlpapi.dll`) |
+| Mod DLL | `jet_unlimited.dll`, built for x64 |
+| Access | write access to the game folder |
 
-Vérifier le SHA-256 de `stormworks64.exe` (PowerShell) :
+Check the SHA-256 of `stormworks64.exe` (PowerShell):
 
 ```powershell
 Get-FileHash "C:\Program Files (x86)\Steam\steamapps\common\Stormworks\stormworks64.exe" -Algorithm SHA256
 ```
 
-Le hash doit correspondre à l'un des deux ci-dessus. Sinon, le loader refusera
-tous les hooks : c'est volontaire.
+The hash must match one of the two above. Otherwise the loader refuses every
+hook: this is on purpose.
 
 ---
 
-## 2. Compiler le loader et la DLL du mod
+## 2. Building the mod's DLL
 
-Depuis le dépôt StormFabric :
+From this repository (MSVC x64 required; the StormFabric SDK is expected in a
+sibling `StormFabric` checkout):
 
 ```bat
-cd /d "H:\Bordel 4TO NVME\StormFabric"
-cmd /c ".\build.bat"
-cmd /c "examples\build_examples.bat"
+build_mod.bat
 ```
 
-Résultats :
+or, with the SDK somewhere else:
 
-```text
-StormFabric\build\iphlpapi.dll
-StormFabric\build\examples\jet_unlimited\jet_unlimited.dll
-StormFabric\build\examples\jet_unlimited\mod.json
-StormFabric\build\examples\jet_unlimited\*.xml
-StormFabric\build\examples\jet_unlimited\*.bin
+```bat
+build_mod.bat "<path to StormFabric>\include"
 ```
 
-La DLL est une couche SDK minimale : elle journalise et expose `SwModInit` /
-`SwModUnload`. Elle ne contient ni adresse moteur ni patch. Le loader la charge
-comme DLL principale du mod (sinon le mod est signalé `MISSING DLL`) ;
-l'injection du composant est faite par le loader, pas par cette DLL.
+Result: `mod\jet_unlimited\jet_unlimited.dll`. A ready-made zip of the mod
+folder is attached to each GitHub release.
+
+The loader itself is built from the StormFabric repository (`build.bat`, result
+`build\iphlpapi.dll`).
 
 ---
 
-## 3. Installer le loader
+## 3. Installing the loader
 
-1. **Fermer Stormworks** (vérifier dans le gestionnaire de tâches qu'il ne reste
-   pas de `stormworks64.exe`).
-2. Localiser le dossier du jeu (celui qui contient `stormworks64.exe`).
-3. Si un `iphlpapi.dll` existe déjà, le sauvegarder sous un autre nom.
-4. Copier `StormFabric\build\iphlpapi.dll` à la racine du jeu.
+1. **Close Stormworks** (check in the Task Manager that no `stormworks64.exe` is
+   left).
+2. Find the game folder (the one that holds `stormworks64.exe`).
+3. If an `iphlpapi.dll` already exists there, save it under another name.
+4. Copy StormFabric's `build\iphlpapi.dll` to the game root.
 
-Le loader est un proxy : `stormworks64.exe` importe `IPHLPAPI.DLL` ; Windows
-charge la DLL du dossier de l'exécutable en premier, puis les forwarders
-renvoient les exports vers la vraie `C:\Windows\System32\iphlpapi.dll`.
+The loader is a proxy: `stormworks64.exe` imports `IPHLPAPI.DLL`; Windows loads
+the DLL from the executable's folder first, then the forwarders send the exports
+on to the real `C:\Windows\System32\iphlpapi.dll`.
 
-> Ne pas copier `iphlpapi.dll` dans `System32` ni dans un autre dossier : il doit
-> être **à côté de `stormworks64.exe`**.
+> Do not copy `iphlpapi.dll` into `System32` or any other folder: it must sit
+> **next to `stormworks64.exe`**.
 
 ---
 
-## 4. Installer le mod
+## 4. Installing the mod
 
-Créer l'arborescence suivante :
+Create this tree:
 
 ```text
 <Stormworks>\
 ├── stormworks64.exe
 ├── iphlpapi.dll
 └── mods\
-    ├── _modloader.ini
     └── jet_unlimited\
         ├── mod.json
         ├── jet_unlimited.dll
         ├── jet_engine_combustion_chamber_unlimited.xml
-        ├── jet_engine_combustion_chamber_unlimited.bin   (asset historique, non requis)
-        ├── jet_engine_exhaust_unlimited.xml
+        ├── jet_engine_combustion_chamber_unlimited.bin   (historical asset, not required)
         └── README.md
 ```
 
-Copier les fichiers depuis :
+Copy the content of `mod\jet_unlimited\` from this repository (or extract the
+release zip into `<Stormworks>\mods\`).
 
-- `Jet Exhaust Unlimited Mod StormFabric\mod\jet_unlimited\` (mod.json, XML,
-  `.bin`, README, source `.cpp`) ;
-- `StormFabric\build\examples\jet_unlimited\jet_unlimited.dll` (DLL compilée).
+The mod reads `jet_engine_combustion_chamber_unlimited.xml` to build the
+component's XML descriptor. Without it, the log shows
+`Jet: component XML not found` and the component is not injected.
 
-Le `.bin` et le XML doivent avoir le **même radical** :
-`jet_engine_combustion_chamber_unlimited`. C'est ce que vérifie le loader pour
-armer le mod :
-
-- `inject_components` contient le `.bin` ;
-- `inject_definitions` contient le `.xml` correspondant.
-
-Sans le `.bin` ou sans le XML, le loader journalise
-`Jet: composant declare absent` / `descripteur XML introuvable` et n'installe
-rien.
-
-### 4.1 `mods\_modloader.ini`
-
-Le fichier contient l'état d'activation des mods, une ligne `nom_dossier=0|1` :
-
-```ini
-jet_unlimited=1
-```
-
-- `1` : mod actif ;
-- `0` : mod désactivé (aucun hook, aucun patch) ;
-- clé absente : la valeur par défaut de `mod.json` (`enabled_by_default: true`)
-  s'applique.
-
-Le nom de la clé est le **nom du dossier** (`jet_unlimited`). Si vous renommez le
-dossier, renommez la clé.
-
-Le menu **MODS** du loader écrit ce fichier. On peut aussi éditer le fichier à la
-main, jeu fermé.
+The mod is enabled by default (`enabled_by_default: true` in `mod.json`). It is
+turned on or off in the game's **MODS** menu.
 
 ---
 
-## 5. Premier lancement
+## 5. First start
 
-1. Lancer Stormworks par Steam.
-2. Attendre le menu principal, puis vérifier `StormworksModLoader.log` (à côté de
-   l'exécutable).
-3. Ouvrir **MODS** : `jet_unlimited` doit être listé et activé.
-4. Entrer dans l'atelier, catégorie **JET ENGINES** : le composant
-   **Jet Combustion Chamber Unlimited** doit apparaître.
-5. Placer le composant sur un véhicule, le relier au réacteur, dépasser
-   ~200 RPS : il ne doit pas exploser.
-6. Placer une **chambre de combustion vanilla** à côté et dépasser 200 RPS :
-   elle doit exploser normalement.
+1. Start Stormworks.
+2. Wait for the main menu, then check `StormworksModLoader.log` (next to the
+   executable).
+3. Open **MODS**: `Jet Exhaust Unlimited` must be listed and enabled.
+4. Go to the workbench, **JET ENGINES** category: the
+   **Jet Combustion Chamber Unlimited** component must show up.
+5. Put the component on a vehicle, connect it to the engine, go above ~200 RPS:
+   it must not explode.
+6. Put a **vanilla combustion chamber** next to it and go above 200 RPS: it must
+   explode as usual.
 
-### 5.1 Lignes de log attendues
+### 5.1 Expected log lines
 
 ```text
-Jet: disposition definition build 2 : 11528 o par variante (dernier champ detruit +0x2D00)
-Jet: hooks catalogue installes (build 2) : lookup + ComponentRegistry::Clear
+Jet: definition layout for build 2: 11528 bytes per variant (last destroyed field +0x2D00)
+Jet: catalogue hooks installed (build 2): lookup + ComponentRegistry::Clear
+Over-rev: patch installed (site=..., stub=..., vanilla limit 200.0)
 Jet: source='jet_engine_combustion_chamber' ptr=... cat=11 value=... flags=... -> clone ...
-Jet: composant 'jet_engine_combustion_chamber_unlimited' injecte au catalogue (memoire, value=500123, registre=...)
-Jet: patch sur-regime installe en mode BYPASS (site ..., stub ...)
+Jet: component 'jet_engine_combustion_chamber_unlimited' injected into the catalogue (memory, value=500123, registry=...)
 ```
 
-L'injection peut aussi être annoncée à la demande :
+The injection can also be reported on demand:
 
 ```text
-Jet: lookup 'jet_engine_combustion_chamber_unlimited' -> injecte a la demande
+Jet: lookup 'jet_engine_combustion_chamber_unlimited' -> injected on demand
 ```
 
-C'est normal : le jeu résout les identifiants d'un véhicule pendant la
-désérialisation, avant les pulsations UI.
+This is normal: the game resolves a vehicle's ids during deserialization,
+before the UI pulses.
 
 ---
 
-## 6. Désactivation
+## 6. Disabling
 
-### 6.1 Désactiver l'injection catalogue seulement
+### 6.1 Disable only the catalogue injection
 
 ```bat
 set SW_JET_CATALOGUE=0
 ```
 
-Puis relancer le jeu. Le mod ne pose pas les hooks de catalogue ; le composant
-n'apparaît plus. Le patch de sur-régime reste armé mais ne trouve aucun composant
-`value=500123`, donc il est sans effet visible.
+Then restart the game. The mod does not install the catalogue hooks; the
+component no longer shows up. The over-rev patch stays armed but finds no
+`value=500123` component, so it has no visible effect.
 
-La variable est lue au démarrage. Absente ou valeur non reconnue : injection
-active. Une valeur commençant par `0`, `n`, `N`, `f`, `F` désactive.
+The variable is read at startup. Missing or unknown value: injection on. A value
+starting with `0`, `n`, `N`, `f`, `F` turns it off.
 
-### 6.2 Désactiver tout le mod
+### 6.2 Disable the whole mod
 
-Dans `mods\_modloader.ini` :
+Untick the mod in the game's **MODS** menu, then restart. The mod then installs
+neither the catalogue hooks nor the patch.
 
-```ini
-jet_unlimited=0
-```
+### 6.3 Bisection
 
-Ou décocher le mod dans **MODS**, puis redémarrer. Le mod ne pose alors ni hook
-catalogue ni patch.
-
-### 6.3 Bissection
-
-Créer un fichier vide :
+Create an empty file:
 
 ```text
 mods\jet_unlimited\.no_catalogue_injection
 ```
 
-L'insertion au catalogue est désactivée ; les hooks de diagnostic restent posés.
-Supprimer le fichier pour réactiver. Utile pour déterminer si un blocage de
-chargement vient de l'injection ou du monde.
+The catalogue insertion is turned off; the diagnostic hooks stay installed.
+Delete the file to turn it back on. Useful to tell whether a loading block comes
+from the injection or from the world.
 
 ---
 
-## 7. Désinstallation
+## 7. Uninstalling
 
-1. Fermer le jeu.
-2. Supprimer `mods\jet_unlimited\`.
-3. Mettre `jet_unlimited=0` dans `mods\_modloader.ini` (ou supprimer la ligne).
-4. Pour retirer le loader : supprimer `iphlpapi.dll` du dossier du jeu, ou
-   restaurer le fichier sauvegardé.
-5. Ne pas toucher à `rom/`, `%APPDATA%\Stormworks` ni à `stormworks64.exe`.
+1. Close the game.
+2. Delete `mods\jet_unlimited\`.
+3. To remove the loader: delete `iphlpapi.dll` from the game folder, or restore
+   the saved file.
+4. Do not touch `rom/`, `%APPDATA%\Stormworks` or `stormworks64.exe`.
 
-Aucun fichier du jeu n'est modifié par le mod ou par le loader ; la
-désinstallation est donc une simple suppression de fichiers ajoutés.
+Neither the mod nor the loader modifies any game file; uninstalling is just
+deleting the added files.
 
 ---
 
-## 8. Vérifications de non-régression
+## 8. Regression checks
 
-Après une mise à jour du loader ou du mod, reconstruire puis réinstaller :
+After an update of the loader or the mod, rebuild, run the tests, then
+reinstall:
 
 ```bat
-cd /d "H:\Bordel 4TO NVME\StormFabric"
-cmd /c ".\build.bat"
-cmd /c ".\tests\run_tests.bat"
+build_mod.bat
+tests\run_tests.bat
 ```
 
-Attendu :
+Expected:
 
 ```text
-Build successful: ...\build\iphlpapi.dll
-All available test suites passed successfully!
+Build successful:
+All mod logic tests passed.
 ```
 
-Tests ciblés :
-
-```bat
-build\tests\jet_patch_tests.exe "H:\Jeux\StormworksV1.15.23\Stormworks\stormworks64.exe"
-build\tests\jet_catalogue_tests.exe "H:\Jeux\StormworksV1.15.23\Stormworks\stormworks64.exe" "H:\Jeux\Stormworks\stormworks64.exe"
-```
+The loader's own tests are run from the StormFabric repository
+(`tests\run_tests.bat`).
 
 ---
 
-## 9. Dépannage
+## 9. Troubleshooting
 
-| Symptôme | Vérifier |
+| Symptom | Check |
 |---|---|
-| Le jeu ne démarre plus | `iphlpapi.dll` x64, version du jeu, conflit avec un autre proxy |
-| Aucun log `Jet:` | le loader n'est pas chargé (mauvais dossier, jeu non lancé par Steam, binaire non reconnu) |
-| Composant absent | `SW_JET_CATALOGUE=0` ? marqueur `.no_catalogue_injection` ? mod actif ? `.bin` et `.xml` présents ? |
-| Composant présent mais explose | patch non installé : chercher `signature ... absente/ambigue` ou `constante ... inattendue` |
-| Composant disparaît d'un véhicule | réinjection trop tardive : vérifier `Jet: lookup ... -> injecte a la demande` et recharger |
-| `LoadLibrary failed` | DLL 32 bits, dépendance manquante, ou nom `dll` incorrect dans `mod.json` |
-| Crash au shutdown | version de loader trop ancienne (correctif `ShutdownJetCatalogueInjection`) ; ne pas mélanger des copies |
+| The game no longer starts | `iphlpapi.dll` is x64, game version, conflict with another proxy |
+| No `Jet:` line in the log | the loader is not loaded (wrong folder, unrecognised binary) |
+| Component missing | `SW_JET_CATALOGUE=0`? `.no_catalogue_injection` marker? mod enabled in **MODS**? XML present? |
+| Component present but explodes | patch not installed: look for `Over-rev: site signature ...` or `Over-rev: unexpected site constant` |
+| Component disappears from a vehicle | check `Jet: lookup ... -> injected on demand` and the `Clear` lines (`registry=` vs `injection=`); see 2.0.1 in the CHANGELOG |
+| `LoadLibrary failed` | 32-bit DLL, missing dependency, or wrong `dll` name in `mod.json` |
+| Crash on exit | outdated loader or mod; do not mix copies |
 
-Le journal est la première source : `StormworksModLoader.log`, rechercher `Jet:`
-et `Jet[diag]`.
+The log is the first source: `StormworksModLoader.log`, look for `Jet:`,
+`Jet[diag]` and `Over-rev:`.

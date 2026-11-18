@@ -15,8 +15,8 @@ namespace jet {
 struct Engine {
     const SwModHost* host = nullptr;
     const SwNativeApi* native = nullptr;
-    uint8_t* base = nullptr;    // image du jeu (ASLR)
-    uint32_t build = 0;         // 1/2 = builds certifiés, 0 = inconnu
+    uint8_t* base = nullptr;    // game image (ASLR)
+    uint32_t build = 0;         // 1/2 = certified builds, 0 = unknown
 };
 extern Engine g_engine;
 

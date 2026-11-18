@@ -10,13 +10,13 @@
 namespace jet {
 namespace {
 
-// Les deux hooks du module sont des SERVICES MOTEUR GÉNÉRIQUES : le loader
-// StormFabric les résout depuis son profil de découverte (contrat d'octets
-// retenu, validé avant tout écriture) et les expose via l'API native. Le mod ne
-// contient donc AUCUNE adresse d'exécutable.
+// Both hooks of this module are GENERIC ENGINE SERVICES: the StormFabric loader
+// resolves them from its discovery profile (retained byte contract, validated
+// before any write) and exposes them through the native API. The mod therefore
+// contains NO executable address.
 //
-// Tailles de prologue : dérivées des longueurs d'instruction certifiées, ce qui
-// garantit qu'on ne coupe jamais une instruction en deux (MOV RBX,RCX = 48 8B D9).
+// Prologue sizes: derived from the certified instruction lengths, which
+// guarantees an instruction is never cut in half (MOV RBX,RCX = 48 8B D9).
 constexpr size_t kFindLens[] = {5, 5, 1, 1, 1, 1, 2};          // mov, mov, push x4, push r12
 constexpr size_t kClearLens[] = {5, 5, 1, 4, 3};                // mov, mov, push, sub, mov
 constexpr size_t Sum(const size_t* v, size_t n) {
@@ -24,38 +24,37 @@ constexpr size_t Sum(const size_t* v, size_t n) {
 }
 constexpr size_t kFindPatch = Sum(kFindLens, sizeof(kFindLens) / sizeof(kFindLens[0]));
 constexpr size_t kClearPatch = Sum(kClearLens, sizeof(kClearLens) / sizeof(kClearLens[0]));
-static_assert(kFindPatch == 16, "prologue Find: frontiere d'instruction changee");
-static_assert(kClearPatch == 18, "prologue Clear: frontiere d'instruction changee");
+static_assert(kFindPatch == 16, "Find prologue: instruction boundary changed");
+static_assert(kClearPatch == 18, "Clear prologue: instruction boundary changed");
 
-// Disposition d'une définition (0x2d08 octets, 8 variantes chaînées).
+// Layout of a definition (0x2d08 bytes, 8 chained variants).
 //
-// CRASH AU SHUTDOWN (crash.dmp du 2026-11-08, AV 0xC0000005 lecture de
-// 0x1FFFFFFFF8 a stormworks64.exe+0x9B2D5D, c.-a-d. DANS la liberation de chaine
-// du moteur) : une seule valeur 0x2848 était codée en dur, alors que la taille de
-// l'objet a CHANGÉ entre les deux builds reviewés. Sur 1.15.23 la taille réelle
-// d'une ComponentDefinition est 0x2d08, certifiée par TROIS sites indépendants :
-//   * 0x46EEC0 `mov ecx,0x2d08 ; call 0x958C28` -> operator new d'une définition
-//     par le chargeur de composants ;
-//   * 0x8B9FEE `mov edx,0x2d08 ; call 0x95881C` -> operator delete(ptr,size) de
-//     CHAQUE variante par le destructeur du ring des variantes ;
-//   * 0x87FDB0 (destructeur de définition) libère des champs jusqu'à +0x2D00,
-//     donc au-delà de 0x2848.
-// Avec un pas de 0x2848 sur 1.15.23 nos 8 variantes SE CHEVAUCHAIENT de 0x4C0
-// octets : détruire la variante k détruisait/libérait des champs appartenant à la
-// variante k+1 (double free, puis relecture d'une paire (len,cap) de chaîne comme
-// s'il s'agissait d'un pointeur -> str_free(0x0000002000000000) -> lecture de
-// [rcx-8] = 0x0000001FFFFFFFF8 -> AV).
-// Voir build/tests/crash_dump.py (pile reconstituée) et docs/ENGINE_FUNCTION_MAPPING.md.
-constexpr size_t kDefinitionBytesOld = 0x2848;   // 1.15.18 (référence historique)
-constexpr size_t kDefinitionBytesNew = 0x2d08;   // 1.15.23 (certifié, voir ci-dessus)
+// SHUTDOWN CRASH (crash.dmp of 2026-11-08, AV 0xC0000005 reading 0x1FFFFFFFF8 at
+// stormworks64.exe+0x9B2D5D, i.e. INSIDE the engine's string release): a single
+// 0x2848 value was hardcoded, while the object size CHANGED between the two
+// reviewed builds. On 1.15.23 the real size of a ComponentDefinition is 0x2d08,
+// certified by THREE independent sites:
+//   * 0x46EEC0 `mov ecx,0x2d08 ; call 0x958C28` -> operator new of a definition
+//     by the component loader;
+//   * 0x8B9FEE `mov edx,0x2d08 ; call 0x95881C` -> operator delete(ptr,size) of
+//     EACH variant by the variants ring destructor;
+//   * 0x87FDB0 (definition destructor) frees fields up to +0x2D00, so beyond
+//     0x2848.
+// With a 0x2848 stride on 1.15.23 our 8 variants OVERLAPPED by 0x4C0 bytes:
+// destroying variant k destroyed/freed fields belonging to variant k+1 (double
+// free, then a (len,cap) string pair read back as a pointer ->
+// str_free(0x0000002000000000) -> read of [rcx-8] = 0x0000001FFFFFFFF8 -> AV).
+// See tools/crash_dump.py (rebuilt stack) and docs/ENGINE_FUNCTION_MAPPING.md.
+constexpr size_t kDefinitionBytesOld = 0x2848;   // 1.15.18 (historical reference)
+constexpr size_t kDefinitionBytesNew = 0x2d08;   // 1.15.23 (certified, see above)
 constexpr size_t kVariants = 8;
-// Taille EFFECTIVE, fixée à l'initialisation selon le build détecté.
-size_t g_definitionBytes = kDefinitionBytesNew;  // NOLINT : état de module, comme g_cat
-static_assert(kDefinitionBytesNew >= 0x2d00 + 8, "une definition doit couvrir ses champs detruits (+0x2D00)");
+// EFFECTIVE size, set at initialisation from the detected build.
+size_t g_definitionBytes = kDefinitionBytesNew;  // NOLINT: module state, like g_cat
+static_assert(kDefinitionBytesNew >= 0x2d00 + 8, "a definition must cover its destroyed fields (+0x2D00)");
 constexpr size_t kOffVariantIndex = 0x40;
-// Offsets dérivés de la table de disposition certifiée (jet_catalogue.h) :
-// une seule source de vérité, donc aucun risque de divergence entre la lecture
-// de la source et l'écriture du clone.
+// Offsets derived from the certified layout table (jet_catalogue.h): a single
+// source of truth, so reading the source and writing the clone can never
+// diverge.
 constexpr size_t kOffId = kDefinitionLayout.idPtr;
 constexpr size_t kOffIdLen = kDefinitionLayout.idLen;
 constexpr size_t kOffIdCap = kDefinitionLayout.idCap;
@@ -65,30 +64,30 @@ constexpr size_t kOffNameCap = kDefinitionLayout.nameCap;
 constexpr size_t kOffCategory = kDefinitionLayout.category;
 constexpr size_t kOffValue = kDefinitionLayout.value;
 constexpr size_t kOffFlags = kDefinitionLayout.flags;
-static_assert(kOffFlags == 0x2b8, "offset flags certifie sur 1.15.23");
+static_assert(kOffFlags == 0x2b8, "flags offset certified on 1.15.23");
 static_assert(kDefinitionLayout.flagsBytes == sizeof(uint64_t),
-              "flags doit etre ecrit en 64 bits");
-// Dernier champ touché par le destructeur de définition (0x87FDB0 libère
-// [def+0x2CE8] et [def+0x2CF8], puis écrit [def+0x2CF0] / [def+0x2D00]) : ce
-// champ DOIT tenir dans une variante, sinon la destruction déborde sur la
-// variante voisine (cf. JetCatalogueCloneGeometry).
+              "flags must be written as 64 bits");
+// Last field touched by the definition destructor (0x87FDB0 frees
+// [def+0x2CE8] and [def+0x2CF8], then writes [def+0x2CF0] / [def+0x2D00]): this
+// field MUST fit in a variant, otherwise the destruction spills onto the
+// neighbouring variant (see JetCatalogueCloneGeometry).
 constexpr size_t kOffDestroyedTailNew = 0x2d00;   // 1.15.23
-constexpr size_t kOffDestroyedTailOld = 0x2840;   // 1.15.18 (taille - 8)
-// Rings du registre.
+constexpr size_t kOffDestroyedTailOld = 0x2840;   // 1.15.18 (size - 8)
+// Registry rings.
 constexpr size_t kOffVariants = 0xc8;
 constexpr size_t kOffDescriptors = 0xe0;
 constexpr size_t kOffRing = 0xf8;
 constexpr size_t kOffBuckets = 0x110;
 constexpr size_t kBucketStride = 24;
 
-// Capacité demandée quand on doit ALLOUER un ring jamais alloué (cap == 0).
+// Capacity requested when a never-allocated ring (cap == 0) must be ALLOCATED.
 constexpr uint32_t kRingInitialCapacity = 1024;
 
 constexpr char kComponentId[] = "jet_engine_combustion_chamber_unlimited";
 constexpr char kComponentName[] = "Jet Combustion Chamber Unlimited";
 constexpr char kSourceId[] = "jet_engine_combustion_chamber";
 constexpr uint32_t kSignatureValue = 500123;
-constexpr int32_t kCategory = 11;   // « JET ENGINES » (valeur historique, non utilisée : on lit la catégorie réelle de la source)
+constexpr int32_t kCategory = 11;   // "JET ENGINES" (historical value, unused: the real category is read from the source)
 
 using FindDefFn = void* (*)(void*, const void*);
 using LocRegisterFn = void (*)(const SwEngineString*, const SwEngineString*);
@@ -96,20 +95,20 @@ using GrowFn = void (*)(void*, uint32_t);
 using ClearFn = void (*)(void*);
 void RegisterAllLocalization(LocRegisterFn fn);
 
-// Géométrie du clone : PURE et testable hors jeu (voir JetCatalogueCloneGeometry).
-// Un pas plus petit que la taille d'une définition fait empiéter chaque variante
-// sur la suivante : toute destruction par le moteur devient alors fatale.
+// Clone geometry: PURE and testable off-game (see JetCatalogueCloneGeometry).
+// A stride smaller than the size of a definition makes each variant spill onto
+// the next one: any destruction by the engine then becomes fatal.
 bool FieldInsideVariant(uint64_t stride, uint64_t offset, uint64_t size) {
     return stride != 0 && offset + size <= stride;
 }
 
 struct State {
-    // hook FindComponentDefinitionByName
+    // FindComponentDefinitionByName hook
     uint8_t* findTarget = nullptr;
     uint8_t* findTramp = nullptr;
     FindDefFn originalFind = nullptr;
-    SwHandle findHandle = 0;      // poignée du loader (sw_hook_restore)
-    // hook ComponentRegistry::Clear
+    SwHandle findHandle = 0;      // loader handle (sw_hook_restore)
+    // ComponentRegistry::Clear hook
     uint8_t* clearTarget = nullptr;
     uint8_t* clearTramp = nullptr;
     ClearFn originalClear = nullptr;
@@ -117,39 +116,40 @@ struct State {
     LocRegisterFn locRegister = nullptr;
     GrowFn grow = nullptr;
     std::string xmlPath;
-    void* registry = nullptr;     // registre dans lequel on a injecté
-    void* definition = nullptr;   // variante 0 (entrée des rings global/catégorie)
-    // Chaque variante est une allocation PROPRE de la taille réelle de l'objet
-    // moteur : le destructeur du ring des variantes libère chaque entrée par
-    // operator delete(ptr, 0x2d08). Un bloc unique découpé en 8 (ancien schéma)
-    // rendait toute destruction par le moteur fatale (8 delete sur un bloc).
+    void* registry = nullptr;     // registry we injected into
+    void* definition = nullptr;   // variant 0 (entry of the global/category rings)
+    // Each variant is its OWN allocation of the engine object's real size: the
+    // variants ring destructor frees every entry with operator delete(ptr,
+    // 0x2d08). A single block cut into 8 (old scheme) made any destruction by the
+    // engine fatal (8 deletes on one block).
     void* variants[kVariants] = {};
-    void* builtFor = nullptr;     // registre pour lequel `definition` a été construite
-    int32_t builtCategory = -1;   // catégorie (bucket) lue sur la définition source
-    void* descriptor = nullptr;   // descripteur XML 32 o (construit UNE fois)
+    void* builtFor = nullptr;     // registry `definition` was built for
+    int32_t builtCategory = -1;   // category (bucket) read from the source definition
+    void* descriptor = nullptr;   // 32-byte XML descriptor (built ONCE)
     SwEngineString descriptorId = {}, descriptorXml = {};
-    bool registered = false;      // insérée dans les rings (ne jamais re-construire)
+    bool registered = false;      // inserted into the rings (never rebuild)
     bool failed = false;
-    bool clearing = false;        // B1/M6 : Clear en cours -> ne pas injecter
-    bool shuttingDown = false;    // DllMain(PROCESS_DETACH) : plus aucune écriture
-    int attempts = 0;             // M3 : échecs transitoires bornés (pas de "failed" définitif)
-    bool inInject = false;        // réentrance : injection lancée depuis le hook de lookup
-    bool injectDisabled = false;  // bissection : marqueur <mod>/.no_catalogue_injection
-    bool shapesLogged = false;    // diagnostic des rings déjà journalisé
-    int validateFails = 0;        // validations consécutives refusées (diagnostic)
-    int pushFails = 0;            // insertions de ring refusées (diagnostic, voir RingPushLogged)
-    uint64_t lastAttemptMs = 0;   // cadencement des tentatives faites depuis le lookup
-    // Injection à la demande : provenance du clone et âge de celui-ci.
-    void* sourceUsed = nullptr;   // définition source COPIÉE dans le clone courant
-    uint32_t epoch = 0;           // incrémenté à chaque ComponentRegistry::Clear
-    uint32_t cloneEpoch = 0;      // valeur de `epoch` au moment de la construction
-    uint32_t lazyHits = 0;        // lookups de notre id déjà servis par l'entrée existante
-    uint32_t lazyMisses = 0;      // lookups de notre id non servis (fail-closed)
-    uint32_t nativeResolved = 0;  // lookups où le MOTEUR a retrouvé notre entrée
+    bool clearing = false;        // B1/M6: Clear in progress -> do not inject
+    bool shuttingDown = false;    // DllMain(PROCESS_DETACH): no more writes
+    int attempts = 0;             // M3: bounded transient failures (no permanent "failed")
+    bool inInject = false;        // re-entrancy: injection started from the lookup hook
+    bool injectDisabled = false;  // bisection: <mod>/.no_catalogue_injection marker
+    bool shapesLogged = false;    // ring diagnostics already logged
+    int validateFails = 0;        // consecutive refused validations (diagnostics)
+    int pushFails = 0;            // refused ring insertions (diagnostics, see RingPushLogged)
+    uint64_t lastAttemptMs = 0;   // pacing of the attempts made from the lookup
+    // On-demand injection: where the clone comes from and how old it is.
+    void* sourceUsed = nullptr;   // source definition COPIED into the current clone
+    uint32_t epoch = 0;           // incremented on every ComponentRegistry::Clear
+    uint32_t cloneEpoch = 0;      // value of `epoch` when the clone was built
+    uint32_t lazyHits = 0;        // lookups of our id already served by the existing entry
+    uint32_t lazyMisses = 0;      // lookups of our id not served (fail-closed)
+    uint32_t nativeResolved = 0;  // lookups where the ENGINE found our entry
 };
 State g_cat;
-// B1 : sérialise injection / Clear / écriture des rings. CRITICAL_SECTION est
-// réentrant (SRWLOCK ne l'est pas) : le hook peut être rappelé par le trampoline.
+// B1: serialises injection / Clear / ring writes. CRITICAL_SECTION is
+// re-entrant (SRWLOCK is not): the hook can be called again through the
+// trampoline.
 CRITICAL_SECTION g_lock;
 bool g_lockInit = false;
 inline void LockAcquire() { if (g_lockInit) EnterCriticalSection(&g_lock); }
@@ -159,9 +159,9 @@ bool IsComponentId(const uint8_t* p, uint32_t len) {
     return p && len == sizeof(kComponentId) - 1 && _strnicmp(reinterpret_cast<const char*>(p), kComponentId, len) == 0;
 }
 
-// Lit l'identifiant d'une entrée selon le type de ring.
-//   définitions (variantes / global / bucket) : id à +0x288 (ptr) / +0x290 (len)
-//   descripteurs (+0xe0)                     : id à +0x00 (ptr) / +0x08 (len)
+// Reads the id of an entry according to the ring type.
+//   definitions (variants / global / bucket): id at +0x288 (ptr) / +0x290 (len)
+//   descriptors (+0xe0)                      : id at +0x00 (ptr) / +0x08 (len)
 bool EntryIsOurs(void* entry, bool descriptor) {
     if (!entry) return false;
     __try {
@@ -174,11 +174,11 @@ bool EntryIsOurs(void* entry, bool descriptor) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
-// Identité des blocs que NOUS avons publiés (clone + descripteur). C'est le
-// critère de retrait le plus sûr : il ne dépend d'aucun champ de l'objet, donc
-// il fonctionne même si le moteur (ou une écriture concurrente) a corrompu l'id.
-// Le crash du shutdown venait précisément d'une entrée laissée dans les rings :
-// le moteur la détruisait avec SES allocateurs et sa taille d'objet.
+// Identity of the blocks WE published (clone + descriptor). This is the safest
+// removal criterion: it depends on no field of the object, so it works even if
+// the engine (or a concurrent write) corrupted the id. The shutdown crash came
+// precisely from an entry left in the rings: the engine destroyed it with ITS
+// allocators and its object size.
 bool IsPublishedEntry(const void* entry) {
     if (!entry) return false;
     if (entry == g_cat.descriptor) return true;
@@ -188,9 +188,9 @@ bool IsPublishedEntry(const void* entry) {
 }
 
 // ---------------------------------------------------------------------------
-// Vue d'un ring du registre : {buf +0, cap +8, head +12, count +16} (stride 24).
-// Toutes les gardes sur les rings sont concentrées ici : aucune autre fonction
-// ne lit/écrit un ring sans passer par ces helpers.
+// View of a registry ring: {buf +0, cap +8, head +12, count +16} (stride 24).
+// All the ring guards are gathered here: no other function reads/writes a ring
+// without going through these helpers.
 struct Ring {
     void** buf = nullptr;
     uint32_t cap = 0;
@@ -210,11 +210,11 @@ bool ReadRing(void* reg, size_t offset, Ring* out) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
-// `head` n'est PAS garanti borné : le moteur ne le replie que dans la croissance
-// de ring (FUN_1408de0b0 remet head=0) ; un compteur brut (head >= cap, voire
-// négatif) est parfaitement exploitable puisque les index sont calculés modulo
-// `cap`. On le NORMALISE donc au lieu de rejeter le registre : rejeter faisait
-// échouer TOUTE l'injection en silence (aucune trace dans le log).
+// `head` is NOT guaranteed to be in range: the engine only wraps it in the ring
+// growth (FUN_1408de0b0 resets head=0); a raw counter (head >= cap, even
+// negative) is perfectly usable since the indices are computed modulo `cap`. We
+// therefore NORMALISE it instead of rejecting the registry: rejecting made the
+// WHOLE injection fail silently (no trace in the log).
 int32_t NormHead(int32_t head, uint32_t cap) {
     if (!cap) return 0;
     int64_t m = static_cast<int64_t>(head) % static_cast<int64_t>(cap);
@@ -222,8 +222,8 @@ int32_t NormHead(int32_t head, uint32_t cap) {
     return static_cast<int32_t>(m);
 }
 
-// M4 : refuse un objet qui n'a pas la géométrie d'un ComponentRegistry.
-// `reason` (optionnel) reçoit un code de refus journalisable une seule fois.
+// M4: refuses an object that does not have the geometry of a ComponentRegistry.
+// `reason` (optional) receives a refusal code that can be logged once.
 enum class Why { kOk = 0, kRingCap, kRingCount, kRingBuf, kRingHead, kRingUncommitted };
 
 bool ValidateRegistryEx(void* reg, Why* reason) {
@@ -240,9 +240,9 @@ bool ValidateRegistryEx(void* reg, Why* reason) {
             if (outCount) *outCount = count;
             if (cap > (1u << 20)) { if (reason) *reason = Why::kRingCap; return false; }
             if (count > cap) { if (reason) *reason = Why::kRingCount; return false; }
-            if (!cap) return true;            // ring vide : (buf=null, head=0, count=0) est valide
+            if (!cap) return true;            // empty ring: (buf=null, head=0, count=0) is valid
             if (!buf) { if (reason) *reason = Why::kRingBuf; return false; }
-            // head hors bornes = toléré (normalisé à l'usage), mais bornage dur ci-dessous.
+            // out-of-range head = tolerated (normalised when used), but hard bound below.
             if (head == INT32_MIN) { if (reason) *reason = Why::kRingHead; return false; }
             MEMORY_BASIC_INFORMATION mbi;
             if (!VirtualQuery(buf, &mbi, sizeof(mbi))) { if (reason) *reason = Why::kRingBuf; return false; }
@@ -257,32 +257,32 @@ bool ValidateRegistryEx(void* reg, Why* reason) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { if (reason) *reason = Why::kRingBuf; return false; }
 }
 
-// (ValidateRegistryEx est le seul point d'entrée : plus de variante sans raison.)
+// (ValidateRegistryEx is the only entry point: no variant without a reason.)
 
 const char* WhyText(Why w) {
     switch (w) {
         case Why::kOk: return "ok";
-        case Why::kRingCap: return "capacite de ring aberrante";
+        case Why::kRingCap: return "absurd ring capacity";
         case Why::kRingCount: return "count > cap";
-        case Why::kRingBuf: return "buffer de ring illisible";
-        case Why::kRingHead: return "head invalide";
-        case Why::kRingUncommitted: return "buffer de ring non commite";
+        case Why::kRingBuf: return "unreadable ring buffer";
+        case Why::kRingHead: return "invalid head";
+        case Why::kRingUncommitted: return "ring buffer not committed";
     }
     return "?";
 }
 
-// Journalise une seule fois la géométrie complete des rings : indispensable pour
-// diagnostiquer un refus (le log precedent n'affichait jamais ces valeurs).
+// Logs the full ring geometry once: essential to diagnose a refusal (the old
+// log never showed these values).
 void LogRingShapes(void* reg) {
     if (g_cat.shapesLogged || !reg) return;
     g_cat.shapesLogged = true;
     Ring v, d, a;
     if (!ReadRing(reg, kOffVariants, &v) || !ReadRing(reg, kOffDescriptors, &d) ||
         !ReadRing(reg, kOffRing, &a)) {
-        LogWarn("Jet[diag] registre %p illisible", reg);
+        LogWarn("Jet[diag] registry %p unreadable", reg);
         return;
     }
-    LogInfo("Jet[diag] registre=%p | variantes cap=%u head=%d count=%u | xml cap=%u head=%d count=%u | "
+    LogInfo("Jet[diag] registry=%p | variants cap=%u head=%d count=%u | xml cap=%u head=%d count=%u | "
             "global cap=%u head=%d count=%u",
             reg, v.cap, v.head, v.count, d.cap, d.head, d.count, a.cap, a.head, a.count);
 }
@@ -303,10 +303,10 @@ bool RingHasId(void* reg, size_t offset, bool descriptor) {
     return false;
 }
 
-// Retire nos entrées d'un ring en le compactant.
-// B4 : la copie DOIT passer par un buffer temporaire — écrire buf[kept] pendant
-// qu'on lit buf[(head+i)%cap] écrase des entrées non encore lues dès que head!=0
-// (doublons => le moteur détruit deux fois la même variante => corruption de tas).
+// Removes our entries from a ring by compacting it.
+// B4: the copy MUST go through a temporary buffer — writing buf[kept] while
+// reading buf[(head+i)%cap] overwrites entries not read yet as soon as head!=0
+// (duplicates => the engine destroys the same variant twice => heap corruption).
 size_t RemoveOursFromRing(void* reg, size_t offset, bool descriptor) {
     size_t removed = 0;
     if (!reg) return 0;
@@ -320,11 +320,11 @@ size_t RemoveOursFromRing(void* reg, size_t offset, bool descriptor) {
         const uint32_t cap = r.cap;
         const uint32_t count = r.count;
         if (cap > (1u << 16)) {
-            // Ring énorme : pas de buffer temporaire de 512 Ko par thread. On
-            // retire par ÉCHANGE avec la dernière entrée logique (l'ordre d'un
-            // ring n'a pas de sens pour le moteur, qui le parcourt comme un
-            // ensemble). Ne JAMAIS laisser nos entrées en place : c'est ce qui
-            // faisait détruire nos définitions par le moteur au shutdown.
+            // Huge ring: no 512 KB temporary buffer per thread. Remove by SWAPPING
+            // with the last logical entry (the order of a ring means nothing to
+            // the engine, which walks it as a set). NEVER leave our entries in
+            // place: that is what made the engine destroy our definitions on
+            // shutdown.
             uint32_t remaining = count;
             uint32_t i = 0;
             while (i < remaining) {
@@ -342,7 +342,7 @@ size_t RemoveOursFromRing(void* reg, size_t offset, bool descriptor) {
             *reinterpret_cast<uint32_t*>(base + 16) = remaining;
             return removed;
         }
-        static __declspec(thread) void* keep[1 << 16];   // 512 Ko par thread, hors pile
+        static __declspec(thread) void* keep[1 << 16];   // 512 KB per thread, off the stack
         uint32_t kept = 0;
         for (uint32_t i = 0; i < count; ++i) {
             uint32_t idx = static_cast<uint32_t>((static_cast<int64_t>(head) + i) % cap);
@@ -350,7 +350,7 @@ size_t RemoveOursFromRing(void* reg, size_t offset, bool descriptor) {
             if (EntryIsOurs(e, descriptor) || IsPublishedEntry(e)) { ++removed; continue; }
             keep[kept++] = e;
         }
-        if (!removed) return 0;                       // rien a nous : ne rien reecrire
+        if (!removed) return 0;                       // nothing of ours: rewrite nothing
         for (uint32_t i = 0; i < kept; ++i) buf[i] = keep[i];
         for (uint32_t i = kept; i < count; ++i) buf[i] = nullptr;
         *reinterpret_cast<int32_t*>(base + 12) = 0;   // head
@@ -359,35 +359,35 @@ size_t RemoveOursFromRing(void* reg, size_t offset, bool descriptor) {
     return removed;
 }
 
-// Pourquoi une insertion a été refusée. Distinguer « ring plein » de « ring pas
-// encore alloué » est le cœur du diagnostic : le 2026-11-08 le log annonçait
-// « ring des descripteurs plein » alors que ce ring était à `cap=0 head=0 count=0`,
-// c'est-à-dire VIDE (jamais alloué). Le message masquait la vraie cause du report
-// d'injection pendant tout le chargement de monde.
+// Why an insertion was refused. Telling "ring full" from "ring not allocated
+// yet" is the heart of the diagnostics: on 2026-11-08 the log reported
+// "descriptors ring full" while that ring was at `cap=0 head=0 count=0`, i.e.
+// EMPTY (never allocated). The message hid the real cause of the injection
+// being postponed during the whole world load.
 enum class PushResult { kOk = 0, kUnallocated, kFull, kInvalid };
 
 const char* PushText(PushResult r) {
     switch (r) {
         case PushResult::kOk: return "ok";
-        case PushResult::kUnallocated: return "ring non alloue (cap=0), allocation impossible";
-        case PushResult::kFull: return "ring plein, croissance interdite dans une frame du jeu";
-        case PushResult::kInvalid: return "geometrie de ring invalide";
+        case PushResult::kUnallocated: return "ring not allocated (cap=0), allocation impossible";
+        case PushResult::kFull: return "ring full, growth forbidden inside a game frame";
+        case PushResult::kInvalid: return "invalid ring geometry";
     }
     return "?";
 }
 
-// Insère un pointeur dans un ring (buf, cap, head, count).
-// `allowGrow` = false => jamais de REALLOC : le moteur peut parcourir le ring dans
-// la même frame et garder un pointeur sur l'ancien buffer, qu'une croissance
-// viendrait de libérer. C'est OBLIGATOIRE quand on injecte depuis une frame du jeu
-// (hook de lookup).
-// SEULE EXCEPTION (2026-11-08) : un ring JAMAIS ALLOUÉ (cap == 0, buf == nul) n'a
-// aucun buffer à invalider — personne ne peut l'itérer — et FUN_1408de0b0 gère
-// explicitement ce cas (`test rax,rax` sur l'ancien buffer avant la copie). On
-// l'alloue donc même depuis une frame : c'est la seule façon d'injecter PENDANT le
-// chargement, puisque la pulsation HUD (qui autorise la croissance) n'y tourne pas.
+// Inserts a pointer into a ring (buf, cap, head, count).
+// `allowGrow` = false => never a REALLOC: the engine may walk the ring in the
+// same frame and keep a pointer to the old buffer, which a growth would free.
+// This is MANDATORY when injecting from a game frame (lookup hook).
+// ONLY EXCEPTION (2026-11-08): a NEVER-ALLOCATED ring (cap == 0, buf == null)
+// has no buffer to invalidate — nobody can iterate it — and FUN_1408de0b0
+// explicitly handles that case (`test rax,rax` on the old buffer before the
+// copy). It is therefore allocated even from a frame: that is the only way to
+// inject DURING the load, since the HUD pulse (which allows growth) does not run
+// then.
 PushResult RingPush(void* reg, size_t offset, void* value, bool allowGrow) {
-    // Jamais de pointeur nul ni "petit" (clone+k*0x2848 sur un clone nul) dans un ring du jeu.
+    // Never a null or "small" pointer (clone+k*0x2848 on a null clone) in a game ring.
     if (!reg || !value || reinterpret_cast<uintptr_t>(value) < 0x10000ull) return PushResult::kInvalid;
     __try {
         auto* base = static_cast<uint8_t*>(reg) + offset;
@@ -409,26 +409,26 @@ PushResult RingPush(void* reg, size_t offset, void* value, bool allowGrow) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return PushResult::kInvalid; }
 }
 
-// Une insertion refusée n'est PAS une injection abandonnée : on réessaiera (le
-// chargement peut encore allouer le ring). Le log dit exactement pourquoi, une
-// fois, puis un refus sur 200 pour rester lisible.
+// A refused insertion is NOT an abandoned injection: we will retry (the load may
+// still allocate the ring). The log says exactly why, once, then one refusal in
+// 200 to stay readable.
 bool RingPushLogged(void* reg, size_t offset, void* value, bool allowGrow, const char* what) {
     const PushResult r = RingPush(reg, offset, value, allowGrow);
     if (r == PushResult::kOk) return true;
     if (++g_cat.pushFails == 1 || g_cat.pushFails % 200 == 0)
-        LogWarn("Jet: insertion '%s' differee (%s) ; %d refus cumules", what, PushText(r),
+        LogWarn("Jet: insertion into '%s' postponed (%s); %d refusals so far", what, PushText(r),
                 g_cat.pushFails);
     return false;
 }
 
-// Recherche de la définition SOURCE à cloner.
-// L'identifiant interne n'est pas forcément exactement "jet_engine_combustion_chamber"
-// (le jeu peut le stocker avec une autre casse, ou avec un suffixe). On fait donc
-// trois passes, de la plus stricte à la plus large, et on renvoie l'id réellement
-// trouvé pour qu'il soit journalisé :
-//   0. id exact (insensible à la casse)
-//   1. id commençant par l'id demandé (suffixe éventuel)
-//   2. id contenant "combustion_chamber" et pas "unlimited" (la chambre vanilla)
+// Looking up the SOURCE definition to clone.
+// The internal id is not necessarily exactly "jet_engine_combustion_chamber"
+// (the game may store it with another case, or with a suffix). So there are
+// three passes, from the strictest to the widest, and the id actually found is
+// returned so it can be logged:
+//   0. exact id (case-insensitive)
+//   1. id starting with the requested id (possible suffix)
+//   2. id containing "combustion_chamber" and not "unlimited" (the vanilla chamber)
 bool IdContainsNoCase(const char* p, uint32_t len, const char* needle) {
     const size_t n = strlen(needle);
     if (!p || n > len) return false;
@@ -472,11 +472,11 @@ void* FindInRegistryEx(void* reg, const char* id, char* outId, size_t outSize) {
     return best;
 }
 
-// Ancien point d'entrée (id exact) : conservé par FindInRegistryEx, qui couvre
-// désormais l'id exact, les suffixes et la recherche par sous-chaîne.
+// Old entry point (exact id): covered by FindInRegistryEx, which now handles the
+// exact id, suffixes and the substring search.
 
-// Ring des variantes (+0xc8) : les 8 sous-définitions du clone.
-// M2 : le XML est lu et validé AVANT toute insertion dans les rings.
+// Variants ring (+0xc8): the 8 sub-definitions of the clone.
+// M2: the XML is read and validated BEFORE any insertion into the rings.
 std::string g_xml;
 
 bool PrepareDescriptor() {
@@ -486,7 +486,7 @@ bool PrepareDescriptor() {
     HANDLE f = CreateFileW(wide.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) {
-        LogError("Jet: XML du composant introuvable (%s)", g_cat.xmlPath.c_str());
+        LogError("Jet: component XML not found (%s)", g_cat.xmlPath.c_str());
         return false;
     }
     char buf[8192];
@@ -498,36 +498,36 @@ bool PrepareDescriptor() {
     }
     CloseHandle(f);
     if (truncated) {
-        LogError("Jet: XML du composant trop volumineux ; refuse");
+        LogError("Jet: component XML too large; refused");
         g_xml.clear();
         return false;
     }
     if (g_xml.empty() || g_xml.find(char(0)) != std::string::npos) {
-        LogError("Jet: XML du composant invalide (vide ou NUL interne) ; refuse");
+        LogError("Jet: invalid component XML (empty or embedded NUL); refused");
         g_xml.clear();
         return false;
     }
     return true;
 }
 
-// Ring des variantes (+0xc8) : les 8 sous-définitions du clone.
+// Variants ring (+0xc8): the 8 sub-definitions of the clone.
 bool EnsureVariants(void* reg, bool allowGrow) {
     if (!reg || !g_cat.definition) return false;
     if (RingHasId(reg, kOffVariants, false)) return true;
     for (size_t k = 0; k < kVariants; ++k) {
         if (!g_cat.variants[k]) return false;
-        if (!RingPushLogged(reg, kOffVariants, g_cat.variants[k], allowGrow, "variantes"))
+        if (!RingPushLogged(reg, kOffVariants, g_cat.variants[k], allowGrow, "variants"))
             return false;
     }
     return true;
 }
 
-// Ring des descripteurs (+0xe0) : { id(ptr), len, cap, xml(ptr), xmlLen, xmlCap }.
-// id/xml alloués par l'allocateur aligné du jeu (_aligned_free compatible),
-// desc par l'operator new du jeu (operator delete(desc,32) compatible).
-// Construit UNE seule fois : une insertion refusée ne doit ni reconstruire les
-// 18 Ko de XML ni fuiter les chaînes déjà allouées (l'API du jeu n'expose pas
-// l'operator delete correspondant).
+// Descriptors ring (+0xe0): { id(ptr), len, cap, xml(ptr), xmlLen, xmlCap }.
+// id/xml allocated by the game's aligned allocator (_aligned_free compatible),
+// desc by the game's operator new (operator delete(desc,32) compatible).
+// Built ONCE: a refused insertion must neither rebuild the 18 KB of XML nor leak
+// the strings already allocated (the game API does not expose the matching
+// operator delete).
 bool EnsureDescriptorStruct() {
     if (g_cat.descriptor) return true;
     if (g_xml.empty() || !g_engine.native) return false;
@@ -551,10 +551,10 @@ bool PushDescriptor(void* reg, bool allowGrow) {
     if (!reg) return false;
     if (RingHasId(reg, kOffDescriptors, true)) return true;
     if (!EnsureDescriptorStruct()) return false;
-    return RingPushLogged(reg, kOffDescriptors, g_cat.descriptor, allowGrow, "descripteurs XML");
+    return RingPushLogged(reg, kOffDescriptors, g_cat.descriptor, allowGrow, "XML descriptors");
 }
 
-// Catégorie/type/valeur/flags effectifs de la définition SOURCE (clone vanilla).
+// Effective category/type/value/flags of the SOURCE definition (vanilla clone).
 struct SourceInfo {
     char id[128] = {};
     int32_t category = -1;
@@ -581,29 +581,30 @@ bool ReadSourceInfo(void* source, SourceInfo* out) {
     return true;
 }
 
-// Oublie le clone (sans rien libérer : l'API du jeu n'expose pas operator delete).
-// Les sous-objets copiés depuis la définition vanilla appartiennent au moteur.
+// Forgets the clone (without freeing anything: the game API does not expose
+// operator delete). The sub-objects copied from the vanilla definition belong to
+// the engine.
 void ForgetDefinition() {
     g_cat.definition = nullptr;
     for (size_t k = 0; k < kVariants; ++k) g_cat.variants[k] = nullptr;
     g_cat.builtFor = nullptr;
     g_cat.builtCategory = -1;
-    g_cat.sourceUsed = nullptr;   // provenance du clone : plus aucun clone vivant
+    g_cat.sourceUsed = nullptr;   // where the clone came from: no live clone any more
 }
 
-// M2 : (1) CONSTRUCTION — clone des 8 variantes + descripteur XML, SANS toucher aux
-// rings du jeu. Construite UNE seule fois par registre : une insertion refusée
-// (ring non alloué, ring plein) ne doit ni refaire 8 x 0x2d08 octets à chaque
-// tentative de lookup, ni fuiter ce qui est déjà alloué.
+// M2: (1) BUILDING — clone of the 8 variants + XML descriptor, WITHOUT touching
+// the game's rings. Built only ONCE per registry: a refused insertion (ring not
+// allocated, ring full) must neither redo 8 x 0x2d08 bytes on every lookup
+// attempt nor leak what is already allocated.
 //
-// Chaque variante est une ALLOCATION PROPRE à la taille réelle de l'objet moteur
-// (0x2d08). Deux garanties en découlent, toutes deux nécessaires au shutdown :
-//   1. aucun chevauchement -> détruire une variante ne touche jamais sa voisine ;
-//   2. jamais « 8 delete sur un bloc unique » si le moteur détruit nos entrées.
+// Each variant is its OWN ALLOCATION of the engine object's real size (0x2d08).
+// Two guarantees follow, both needed on shutdown:
+//   1. no overlap -> destroying a variant never touches its neighbour;
+//   2. never "8 deletes on a single block" if the engine destroys our entries.
 //
-// Le résultat DISTINGUE « source absente » (transitoire pendant le chargement : on
-// réessaiera) de « refus » (géométrie/XML inexploitables) : le hook de lookup doit
-// pouvoir journaliser la cause exacte quand le jeu demande notre identifiant.
+// The result TELLS "source missing" (transient during the load: we will retry)
+// from "refused" (unusable geometry/XML): the lookup hook must be able to log
+// the exact cause when the game asks for our id.
 enum class PrepareResult { kReady = 0, kNoSource, kRefused };
 
 PrepareResult PrepareDefinition(void* reg) {
@@ -613,39 +614,40 @@ PrepareResult PrepareDefinition(void* reg) {
     if (!source) {
         static int miss = 0;
         if (++miss == 1 || miss % 200 == 0)
-            LogWarn("Jet: definition source '%s' absente du registre (essai %d)", kSourceId, miss);
-        return PrepareResult::kNoSource;       // M3 : source pas encore chargée -> réessayer
+            LogWarn("Jet: source definition '%s' missing from the registry (attempt %d)", kSourceId, miss);
+        return PrepareResult::kNoSource;       // M3: source not loaded yet -> retry
     }
-    // RÉUTILISATION SÛRE du clone : il n'est valable que si la source est EXACTEMENT la
-    // définition dont il a été copié ET si aucun ComponentRegistry::Clear n'a eu lieu
-    // entre-temps (Clear vide les rings et rend caducs les buffers de la source). En jeu,
-    // deux registres vivants (monde et atelier) partagent la MÊME définition source : on
-    // réinsère alors le clone existant au lieu de refaire 8 x 0x2d08 octets (et de fuiter
-    // le précédent, que l'API du jeu ne permet pas de libérer) à chaque changement.
+    // SAFE REUSE of the clone: it is only valid if the source is EXACTLY the
+    // definition it was copied from AND no ComponentRegistry::Clear happened in
+    // between (Clear empties the rings and makes the source's buffers stale). In
+    // game, two live registries (world and workbench) share the SAME source
+    // definition: the existing clone is then reinserted instead of redoing
+    // 8 x 0x2d08 bytes (and leaking the previous one, which the game API cannot
+    // free) on every change.
     if (g_cat.definition && g_cat.sourceUsed == source && g_cat.cloneEpoch == g_cat.epoch) {
         g_cat.builtFor = reg;
         return PrepareResult::kReady;
     }
-    if (g_cat.definition) {                    // construit pour un AUTRE registre :
-        ForgetDefinition();                    // son clone référence des buffers d'un
-    }                                          // registre mort -> on reconstruit
+    if (g_cat.definition) {                    // built for ANOTHER registry:
+        ForgetDefinition();                    // its clone refers to buffers of a
+    }                                          // dead registry -> rebuild
     if (!ReadSourceInfo(source, &info)) return PrepareResult::kRefused;
-    // Catégorie RÉELLE de la source. Les buckets vont de +0x110 à +0x290, soit
-    // exactement 16 entrées de 24 octets (certifié par ComponentRegistry::Clear,
-    // 0x5f1ac0 : base +0x110, stride 0x18, 16 éléments). Hors bornes => on refuse.
+    // REAL category of the source. The buckets span +0x110 to +0x290, that is
+    // exactly 16 entries of 24 bytes (certified by ComponentRegistry::Clear,
+    // 0x5f1ac0: base +0x110, stride 0x18, 16 elements). Out of range => refused.
     if (info.category < 0 || info.category >= 16) {
-        LogWarn("Jet: categorie source inattendue (%d) ; injection refusee", info.category);
+        LogWarn("Jet: unexpected source category (%d); injection refused", info.category);
         return PrepareResult::kRefused;
     }
     const int32_t category = info.category;
-    // Flags : on CONSERVE ceux de la source, sauf 0x80 / 0x800 qui, dans
-    // FUN_14046ec30 (0x46ec30), font sauter l'enregistrement dans le bucket de
-    // catégorie — c'est-à-dire la présence au catalogue de l'atelier.
+    // Flags: the source's flags are KEPT, except 0x80 / 0x800 which, in
+    // FUN_14046ec30 (0x46ec30), skip the registration in the category bucket —
+    // that is, the presence in the workbench catalogue.
     const uint64_t flags = info.flags & ~static_cast<uint64_t>(0x880);
     LogInfo("Jet: source='%s' ptr=%p cat=%d value=%u flags=0x%llx -> clone cat=%d value=%u flags=0x%llx",
             info.id, source, info.category, info.value, static_cast<unsigned long long>(info.flags),
             category, kSignatureValue, static_cast<unsigned long long>(flags));
-    // M2 : le XML du descripteur est lu et validé AVANT toute allocation puis insertion.
+    // M2: the descriptor XML is read and validated BEFORE any allocation then insertion.
     if (!PrepareDescriptor()) return PrepareResult::kRefused;
     void* variants[kVariants] = {};
     for (size_t k = 0; k < kVariants; ++k) {
@@ -675,19 +677,19 @@ PrepareResult PrepareDefinition(void* reg) {
             fields.nameCap = name.cap;
             fields.category = category;
             fields.value = kSignatureValue;
-            fields.flags = flags;   // uint64_t : le champ moteur fait 8 octets
+            fields.flags = flags;   // uint64_t: the engine field is 8 bytes
             JetCatalogueWriteCloneFields(dst, fields);
             *reinterpret_cast<uint8_t*>(dst + kOffVariantIndex) = static_cast<uint8_t>(k);
         }
         if (ok) {
             g_cat.builtFor = reg;
             g_cat.builtCategory = category;
-            // Provenance du clone : sert à décider d'une réutilisation sans re-clonage
-            // quand un AUTRE registre demande le composant (voir plus haut).
+            // Where the clone comes from: used to decide on a reuse without
+            // re-cloning when ANOTHER registry asks for the component (see above).
             g_cat.sourceUsed = source;
             g_cat.cloneEpoch = g_cat.epoch;
-            // Chaque pointeur publié est mémorisé : le retrait des rings se fait
-            // aussi PAR IDENTITÉ (IsPublishedEntry), pas seulement par id.
+            // Every published pointer is remembered: removal from the rings also
+            // works BY IDENTITY (IsPublishedEntry), not only by id.
             for (size_t k = 0; k < kVariants; ++k) g_cat.variants[k] = variants[k];
             g_cat.definition = variants[0];
         }
@@ -695,17 +697,17 @@ PrepareResult PrepareDefinition(void* reg) {
     return ok ? PrepareResult::kReady : PrepareResult::kRefused;
 }
 
-// M1 : (2) INSERTION — chaque écriture de ring est vérifiée et, au premier refus,
-// TOUTES nos entrées sont retirées : jamais d'état partiel dans le registre vanilla.
-// Un refus n'abandonne pas : le clone et le descripteur restent construits pour la
-// tentative suivante (le chargement peut encore allouer le ring).
+// M1: (2) INSERTION — every ring write is checked and, on the first refusal,
+// ALL our entries are removed: never a partial state in the vanilla registry.
+// A refusal does not give up: the clone and the descriptor stay built for the
+// next attempt (the load may still allocate the ring).
 bool InsertDefinition(void* reg, bool allowGrow) {
-    void* clone = g_cat.definition;             // variante 0 : ring global + bucket
+    void* clone = g_cat.definition;             // variant 0: global ring + bucket
     if (!reg || !clone || !g_cat.variants[0] || g_cat.builtCategory < 0) return false;
     const size_t bucket = kOffBuckets + static_cast<size_t>(g_cat.builtCategory) * kBucketStride;
     if (EnsureVariants(reg, allowGrow) && PushDescriptor(reg, allowGrow) &&
         RingPushLogged(reg, kOffRing, clone, allowGrow, "global") &&
-        RingPushLogged(reg, bucket, clone, allowGrow, "categorie")) {
+        RingPushLogged(reg, bucket, clone, allowGrow, "category")) {
         g_cat.registered = true;
         return true;
     }
@@ -716,31 +718,32 @@ bool InsertDefinition(void* reg, bool allowGrow) {
     return false;
 }
 
-// Une seule tentative d'injection, dans le registre déjà capturé.
-// ATTENTION : l'appelant doit tenir g_lock (CRITICAL_SECTION réentrante).
-// `allowGrow` = false quand on est appelé depuis une frame du jeu : on n'y
-// provoque JAMAIS de realloc de ring (le moteur peut en parcourir un).
-// `otherRegistry` = true quand le registre courant n'est PAS celui déjà servi (le monde et
-// l'atelier ont chacun le leur) : l'entrée existe ailleurs mais pas ici, donc il faut la
-// publier dans CE registre aussi. C'est le cas mesuré en jeu : après le chargement, le jeu
-// résout les composants d'un véhicule dans un registre où notre entrée n'était pas.
+// A single injection attempt, in the registry already captured.
+// WARNING: the caller must hold g_lock (re-entrant CRITICAL_SECTION).
+// `allowGrow` = false when called from a game frame: a ring realloc is NEVER
+// caused there (the engine may be walking one).
+// `otherRegistry` = true when the current registry is NOT the one already served
+// (the world and the workbench each have their own): the entry exists elsewhere
+// but not here, so it must be published in THIS registry too. This is the case
+// measured in game: after loading, the game resolves a vehicle's components in a
+// registry where our entry was not.
 bool TryInjectCurrentRegistry(bool allowGrow, bool otherRegistry = false) {
     if (!g_engine.native) return false;
-    if (g_cat.shuttingDown) return false;       // PROCESS_DETACH : plus aucune ecriture
+    if (g_cat.shuttingDown) return false;       // PROCESS_DETACH: no more writes
     if ((g_cat.registered && !otherRegistry) || g_cat.failed || g_cat.clearing || g_cat.inInject)
         return false;
     if (g_cat.injectDisabled) {
         static bool once = false;
-        if (!once) { once = true; LogInfo("Jet: insertion au catalogue desactivee (marqueur) ; hooks de diagnostic seuls"); }
+        if (!once) { once = true; LogInfo("Jet: catalogue insertion disabled (marker); diagnostic hooks only"); }
         return false;
     }
     void* reg = g_cat.registry;
     if (!reg) return false;
     Why why = Why::kRingCap;
     if (!ValidateRegistryEx(reg, &why)) {
-        // Diagnostic borné : avant, un refus ici ne produisait AUCUN log.
+        // Bounded diagnostics: before, a refusal here produced NO log at all.
         if (g_cat.validateFails < 3 || g_cat.validateFails % 300 == 0)
-            LogWarn("Jet: registre %p refuse par validation (%s) essai %d",
+            LogWarn("Jet: registry %p rejected by validation (%s) attempt %d",
                     reg, WhyText(why), g_cat.validateFails);
         ++g_cat.validateFails;
         return false;
@@ -758,38 +761,40 @@ bool TryInjectCurrentRegistry(bool allowGrow, bool otherRegistry = false) {
         __try {
             if (g_cat.locRegister) RegisterAllLocalization(g_cat.locRegister);
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
-        LogInfo("Jet: composant '%s' injecte au catalogue (memoire, value=%u, registre=%p%s)",
-                kComponentId, kSignatureValue, reg, otherRegistry ? ", second registre" : "");
+        LogInfo("Jet: component '%s' injected into the catalogue (memory, value=%u, registry=%p%s)",
+                kComponentId, kSignatureValue, reg, otherRegistry ? ", second registry" : "");
         return true;
     }
     if (++g_cat.attempts % 600 == 0)
-        LogWarn("Jet: injection catalogue encore en attente (%d tentatives)", g_cat.attempts);
+        LogWarn("Jet: catalogue injection still pending (%d attempts)", g_cat.attempts);
     return false;
 }
 
-// Cadencement de la tentative faite par la pulsation UI (`JetCatalogueTick`), hors frame
-// de jeu donc avec croissance de ring autorisée. Le hook de lookup, lui, n'est plus jamais
-// temporisé à 250 ms : il tente à la première demande (voir kReinjectMinPeriodMs).
+// Pacing of the attempt made by the UI pulse (`JetCatalogueTick`), outside a
+// game frame, so with ring growth allowed. The lookup hook itself is never
+// throttled to 250 ms any more: it tries on the first request (see
+// kReinjectMinPeriodMs).
 constexpr uint64_t kLookupAttemptPeriodMs = 250;
 
-// Ré-injection déclenchée par un lookup : cadencement purement DÉFENSIF (on ne refait pas
-// 8 x 0x2d08 pour chaque lookup d'un chargement). 10 ms = la première opportunité réelle,
-// sans marteler — et surtout SANS le sondage de 250 ms qui laissait une fenêtre pendant
-// laquelle le jeu ne trouvait plus notre composant.
+// Reinjection triggered by a lookup: purely DEFENSIVE pacing (8 x 0x2d08 is not
+// redone for every lookup of a load). 10 ms = the first real opportunity,
+// without hammering — and above all WITHOUT the 250 ms polling that left a
+// window during which the game no longer found our component.
 constexpr uint64_t kReinjectMinPeriodMs = 10;
 
-// RÉ-INJECTION AU PREMIER LOOKUP (quel qu'il soit).
+// REINJECTION ON THE FIRST LOOKUP (whatever it is).
 //
-// Mesuré en jeu le 2026-11-08 : `ComponentRegistry::Clear` retire nos entrées (obligatoire),
-// puis l'atelier désérialise un véhicule SANS jamais appeler FindComponentDefinitionByName
-// avec notre identifiant — la preuve : le véhicule a perdu exactement notre composant
-// (`data/vehicles/tmp/autosave.xml` : 43 -> 42 composants, seul
-// 'jet_engine_combustion_chamber_unlimited' a disparu) alors que le hook de lookup n'a
-// jamais reçu ce nom. Attendre une demande explicite de notre id ne suffit donc PAS : on
-// réinjecte dès le PREMIER lookup venu (le jeu en fait des centaines pendant un chargement :
-// inventaires, prefabs…), donc bien avant la désérialisation des véhicules.
+// Measured in game on 2026-11-08: `ComponentRegistry::Clear` removes our entries
+// (mandatory), then the workbench deserializes a vehicle WITHOUT ever calling
+// FindComponentDefinitionByName with our id — the proof: the vehicle lost
+// exactly our component (`data/vehicles/tmp/autosave.xml`: 43 -> 42 components,
+// only 'jet_engine_combustion_chamber_unlimited' disappeared) while the lookup
+// hook never received that name. Waiting for an explicit request of our id is
+// therefore NOT enough: we reinject on the FIRST lookup that comes (the game
+// does hundreds of them during a load: inventories, prefabs…), so well before
+// the vehicles are deserialized.
 //
-// `allowGrow` reste false : on est dans une frame du jeu, jamais de realloc de ring.
+// `allowGrow` stays false: we are inside a game frame, never a ring realloc.
 void MaybeReinjectOnLookup(void* registry) {
     if (!g_engine.native || !registry) return;
     if (g_cat.shuttingDown || g_cat.clearing || g_cat.inInject) return;
@@ -806,7 +811,7 @@ void MaybeReinjectOnLookup(void* registry) {
             g_cat.registry = registry;
             TryInjectCurrentRegistry(/*allowGrow=*/false, other);
         } else if (g_cat.validateFails < 3 || g_cat.validateFails % 300 == 0) {
-            LogWarn("Jet: registre %p non valide au lookup (%s) essai %d", registry, WhyText(why),
+            LogWarn("Jet: registry %p invalid at lookup (%s) attempt %d", registry, WhyText(why),
                     g_cat.validateFails);
             ++g_cat.validateFails;
         }
@@ -814,23 +819,25 @@ void MaybeReinjectOnLookup(void* registry) {
     LockRelease();
 }
 
-// Bissection « est-ce notre injection qui bloque le chargement ? » : un fichier
-// marqueur à côté du XML du composant (<mod>/.no_catalogue_injection) désactive
-// UNIQUEMENT l'insertion au catalogue, sans toucher au reste du loader : un seul
-// fichier à créer ou supprimer pour trancher.
-// Activation de l'injection du catalogue : ACTIVE PAR DÉFAUT.
-// Le composant « Jet Combustion Chamber Unlimited » doit réapparaître dans l'atelier sans
-// variable d'environnement. Les deux hooks de ce module (`FindComponentDefinitionByName`,
-// appelé en boucle par le jeu, et `ComponentRegistry::Clear`) s'exécutent PENDANT le
-// chargement ; le blocage historique a été corrigé (croissance de ring limitée au seul cas
-// `cap == 0`, clone construit une fois, rollback intégral). Si un blocage revenait avec
-// l'injection active, `SW_JET_CATALOGUE=0` la désactive sans toucher au reste du loader.
+// Bisection "is our injection what blocks the load?": a marker file next to the
+// component XML (<mod>/.no_catalogue_injection) turns off ONLY the catalogue
+// insertion, without touching the rest of the loader: a single file to create or
+// delete to decide.
+//
+// Catalogue injection switch: ON BY DEFAULT.
+// The "Jet Combustion Chamber Unlimited" component must show up in the workbench
+// without any environment variable. Both hooks of this module
+// (`FindComponentDefinitionByName`, called in a loop by the game, and
+// `ComponentRegistry::Clear`) run DURING the load; the historical deadlock was
+// fixed (ring growth limited to the `cap == 0` case, clone built once, full
+// rollback). If a deadlock came back with the injection on,
+// `SW_JET_CATALOGUE=0` turns it off without touching the rest of the loader.
 bool JetCatalogueInjectionRequested() {
     wchar_t buffer[16] = {};
     const DWORD length = GetEnvironmentVariableW(L"SW_JET_CATALOGUE", buffer, 16);
-    if (length == 0 || length >= 16) return true;   // absente (ou illisible) : ACTIF
+    if (length == 0 || length >= 16) return true;   // missing (or unreadable): ON
     const wchar_t c = buffer[0];
-    // Toute valeur explicitement négative désactive ; tout le reste (1, y, oui…) active.
+    // Any explicitly negative value turns it off; anything else (1, y, yes…) turns it on.
     return !(c == L'0' || c == L'n' || c == L'N' || c == L'f' || c == L'F');
 }
 
@@ -844,8 +851,8 @@ bool InjectionDisabledByMarker() {
     return GetFileAttributesW(wide.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
-// Le nom demandé par le jeu est-il NOTRE identifiant ? (lecture SEH de l'EStr
-// {ptr,len,cap} ; aucune écriture).
+// Is the name requested by the game OUR id? (SEH read of the EStr
+// {ptr,len,cap}; no write.)
 bool IsOurLookupName(const void* name) {
     if (!name) return false;
     __try {
@@ -858,49 +865,49 @@ bool IsOurLookupName(const void* name) {
 }
 
 // ---------------------------------------------------------------------------
-// INJECTION À LA DEMANDE — le correctif du composant qui disparaissait du build.
+// ON-DEMAND INJECTION — the fix for the component that disappeared from the build.
 //
-// Appelé UNIQUEMENT quand le jeu demande `jet_engine_combustion_chamber_unlimited`,
-// avec le registre qu'il vient de passer en RCX. À cet instant précis la source
-// vanilla est disponible (le jeu est justement en train de résoudre les identifiants du
-// véhicule), donc le clone est construit et inséré MAINTENANT, avant que le jeu ne
-// conclue « composant inconnu » et ne retire le composant du build.
+// Called ONLY when the game asks for `jet_engine_combustion_chamber_unlimited`,
+// with the registry it just passed in RCX. At that exact moment the vanilla
+// source is available (the game is precisely resolving the vehicle's ids), so
+// the clone is built and inserted NOW, before the game concludes "unknown
+// component" and removes the component from the build.
 //
-// Anti-doublon : si nos pointeurs sont déjà dans les rings de CE registre, on renvoie
-// l'existant sans re-cloner. Fail-closed : sans source, on renvoie null APRÈS avoir
-// journalisé la cause exacte (jamais un null silencieux).
+// De-duplication: if our pointers are already in THIS registry's rings, the
+// existing entry is returned without re-cloning. Fail-closed: without a source,
+// null is returned AFTER logging the exact cause (never a silent null).
 void* LookupOurComponent(void* registry) {
     const uint64_t started = GetTickCount64();
-    // Lecture bon marché du ring global : nos 8 variantes + notre entrée globale y sont
-    // publiées ensemble (InsertDefinition est tout-ou-rien).
+    // Cheap read of the global ring: our 8 variants + our global entry are
+    // published together (InsertDefinition is all-or-nothing).
     const bool published = registry != nullptr && RingHasId(registry, kOffRing, false);
     const LazyResult plan = JetCatalogueLazyPlan(true, published);
     if (plan == LazyResult::kPresent && g_cat.definition) {
         const uint32_t hits = ++g_cat.lazyHits;
         if (hits == 1 || hits % 500 == 0)
-            LogInfo("Jet: lookup '%s' -> deja present (registre=%p, %u lookup(s) servis)",
+            LogInfo("Jet: lookup '%s' -> already present (registry=%p, %u lookup(s) served)",
                     kComponentId, registry, hits);
         return g_cat.definition;
     }
-    if (g_cat.shuttingDown || g_cat.clearing) return nullptr;   // aucune écriture
+    if (g_cat.shuttingDown || g_cat.clearing) return nullptr;   // no write
     if (g_cat.injectDisabled) {
         static bool once = false;
         if (!once) {
             once = true;
-            LogInfo("Jet: insertion au catalogue desactivee (marqueur) ; "
-                    "le lookup '%s' restera non servi", kComponentId);
+            LogInfo("Jet: catalogue insertion disabled (marker); "
+                    "the lookup of '%s' will not be served", kComponentId);
         }
         return nullptr;
     }
     if (!registry) {
-        LogWarn("Jet: lookup '%s' mais registre nul -> clone impossible", kComponentId);
+        LogWarn("Jet: lookup of '%s' with a null registry -> cannot clone", kComponentId);
         return nullptr;
     }
 
     LazyResult result = LazyResult::kRefused;
-    const char* whyText = "registre refuse par validation";
+    const char* whyText = "registry rejected by validation";
     LockAcquire();
-    // Re-vérification sous verrou : un autre thread a pu injecter entre-temps.
+    // Check again under the lock: another thread may have injected meanwhile.
     if (g_cat.definition && g_cat.builtFor == registry && RingHasId(registry, kOffRing, false)) {
         result = LazyResult::kPresent;
     } else {
@@ -908,13 +915,13 @@ void* LookupOurComponent(void* registry) {
         if (!ValidateRegistryEx(registry, &why)) {
             whyText = WhyText(why);
             if (g_cat.validateFails < 3)
-                LogWarn("Jet: registre %p non valide au lookup (%s)", registry, whyText);
+                LogWarn("Jet: registry %p invalid at lookup (%s)", registry, whyText);
             ++g_cat.validateFails;
         } else {
             g_cat.validateFails = 0;
             LogRingShapes(registry);
-            // Le registre demandé devient le registre courant : la pulsation UI peut
-            // ensuite réinjecter sans attendre un nouveau lookup.
+            // The requested registry becomes the current one: the UI pulse can
+            // then reinject without waiting for a new lookup.
             g_cat.registry = registry;
             g_cat.inInject = true;
             PrepareResult prepared = PrepareResult::kRefused;
@@ -925,7 +932,7 @@ void* LookupOurComponent(void* registry) {
                            InsertDefinition(registry, /*allowGrow=*/false);
             } __except (EXCEPTION_EXECUTE_HANDLER) { inserted = false; }
             g_cat.inInject = false;
-            // `allowGrow=false` : on est dans une frame du jeu, jamais de realloc de ring.
+            // `allowGrow=false`: we are inside a game frame, never a ring realloc.
             result = JetCatalogueLazyOutcome(prepared == PrepareResult::kNoSource, inserted);
         }
     }
@@ -937,28 +944,28 @@ void* LookupOurComponent(void* registry) {
         __try {
             if (g_cat.locRegister) RegisterAllLocalization(g_cat.locRegister);
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
-        // PREUVE attendue au prochain essai : le lookup de notre identifiant est servi
-        // à la demande, donc AVANT la conclusion « composant inconnu » du jeu.
-        LogInfo("Jet: lookup '%s' -> injecte a la demande (%llu ms, registre=%p)",
+        // Expected PROOF on the next run: the lookup of our id is served on
+        // demand, so BEFORE the game concludes "unknown component".
+        LogInfo("Jet: lookup '%s' -> injected on demand (%llu ms, registry=%p)",
                 kComponentId, static_cast<unsigned long long>(elapsed), registry);
         served = g_cat.definition;
     } else if (result == LazyResult::kPresent && g_cat.definition) {
         const uint32_t hits = ++g_cat.lazyHits;
         if (hits == 1 || hits % 500 == 0)
-            LogInfo("Jet: lookup '%s' -> deja present (registre=%p, %u lookup(s) servis)",
+            LogInfo("Jet: lookup '%s' -> already present (registry=%p, %u lookup(s) served)",
                     kComponentId, registry, hits);
         served = g_cat.definition;
     } else {
-        // FAIL-CLOSED : null, mais jamais silencieux.
+        // FAIL-CLOSED: null, but never silent.
         const uint32_t misses = ++g_cat.lazyMisses;
         if (misses <= 5 || misses % 200 == 0) {
             if (result == LazyResult::kSourceMissing)
-                LogWarn("Jet: lookup '%s' mais source absente -> clone impossible "
-                        "(registre=%p, %u demande(s) non servie(s))",
+                LogWarn("Jet: lookup of '%s' but the source is missing -> cannot clone "
+                        "(registry=%p, %u request(s) not served)",
                         kComponentId, registry, misses);
             else
-                LogWarn("Jet: lookup '%s' non servi (%s : %s) registre=%p -> null "
-                        "(fail-closed, %u demande(s))",
+                LogWarn("Jet: lookup of '%s' not served (%s: %s) registry=%p -> null "
+                        "(fail-closed, %u request(s))",
                         kComponentId, JetCatalogueLazyResultText(result), whyText, registry,
                         misses);
         }
@@ -967,12 +974,13 @@ void* LookupOurComponent(void* registry) {
     return served;
 }
 
-// Hook de `FindComponentDefinitionByName(registry, name)` : le registre arrive en RCX.
+// Hook of `FindComponentDefinitionByName(registry, name)`: the registry comes in
+// RCX.
 //
-// L'injection n'est plus pilotée par sondage : elle est déclenchée PAR LA DEMANDE, au
-// moment exact où le jeu résout NOTRE identifiant (désérialisation de véhicule, atelier,
-// catalogue). C'est ce qui garantit la disponibilité du composant au moment où le jeu
-// décide de le conserver ou de le RETIRER du build.
+// The injection is no longer driven by polling: it is triggered BY THE REQUEST,
+// at the exact moment the game resolves OUR id (vehicle deserialization,
+// workbench, catalogue). That is what guarantees the component is available when
+// the game decides whether to keep it or REMOVE it from the build.
 void* HookedFindDef(void* registry, const void* name) {
     void* (*original)(void*, const void*) = g_cat.originalFind;
     if (g_cat.shuttingDown) return original ? original(registry, name) : nullptr;
@@ -980,116 +988,119 @@ void* HookedFindDef(void* registry, const void* name) {
     if (IsOurLookupName(name)) {
         void* ours = LookupOurComponent(registry);
         if (!ours) return original ? original(registry, name) : nullptr;   // fail-closed
-        // Preuve mesurable : le MOTEUR lui-même retrouve désormais l'entrée dans SES rings
-        // (le clone est bien un composant de son catalogue, pas seulement un pointeur rendu).
+        // Measurable proof: the ENGINE itself now finds the entry in ITS rings (the
+        // clone really is a component of its catalogue, not just a returned
+        // pointer).
         void* native = original ? original(registry, name) : nullptr;
         if (native) {
             const uint32_t ok = ++g_cat.nativeResolved;
             if (ok == 1 || ok % 500 == 0)
-                LogInfo("Jet: lookup '%s' -> resolu par le moteur (%p, %u fois)",
+                LogInfo("Jet: lookup '%s' -> resolved by the engine (%p, %u times)",
                         kComponentId, native, ok);
             return native;
         }
-        // Diagnostic borné : si le moteur ne voit pas l'entrée, c'est une information
-        // capitale (le clone est servi, mais absent de SES rings) — on ne la répète pas
-        // indéfiniment pour ne pas noyer le journal pendant la désérialisation.
+        // Bounded diagnostics: if the engine does not see the entry, that is key
+        // information (the clone is served, but missing from ITS rings) — it is not
+        // repeated forever so the log is not flooded during deserialization.
         static uint32_t unresolved = 0;
         if (++unresolved == 1 || unresolved % 500 == 0)
-            LogWarn("Jet: lookup '%s' -> injecte mais le moteur ne le resout pas encore "
-                    "(registre=%p, %u fois) ; definition renvoyee pour ne pas perdre le "
-                    "composant",
+            LogWarn("Jet: lookup '%s' -> injected but the engine does not resolve it yet "
+                    "(registry=%p, %u times); definition returned so the component is "
+                    "not lost",
                     kComponentId, registry, unresolved);
         return ours;    }
 
     void* result = original ? original(registry, name) : nullptr;
-    // Ré-injection « au premier lookup » : c'est elle qui garantit que le composant est
-    // présent dans les rings AVANT la désérialisation d'un véhicule (l'atelier ne demande
-    // jamais notre identifiant par ce hook — mesuré).
+    // Reinjection "on the first lookup": this is what guarantees the component is
+    // in the rings BEFORE a vehicle is deserialized (the workbench never asks for
+    // our id through this hook — measured).
     MaybeReinjectOnLookup(registry);
     return result;
 }
 
-// Retire NOS entrées de TOUS les rings d'un registre. Idempotent : un ring sans
-// nos entrées n'est que réécrit à l'identique. N'écrit que si le registre a la
-// géométrie d'un ComponentRegistry (ValidateRegistryEx).
-// Renvoie le nombre d'entrées retirées (0 = rien à nous).
+// Removes OUR entries from ALL the rings of a registry. Idempotent: a ring
+// without our entries is just rewritten as it was. Only writes if the registry
+// has the geometry of a ComponentRegistry (ValidateRegistryEx).
+// Returns the number of entries removed (0 = nothing of ours).
 size_t SweepRegistry(void* reg) {
     if (!reg) return 0;
     Why why = Why::kRingCap;
     if (!ValidateRegistryEx(reg, &why)) {
-        LogWarn("Jet: balayage ignore, registre %p non valide (%s)", reg, WhyText(why));
+        LogWarn("Jet: sweep skipped, registry %p invalid (%s)", reg, WhyText(why));
         return 0;
     }
     size_t removed = 0;
     removed += RemoveOursFromRing(reg, kOffDescriptors, true);
     removed += RemoveOursFromRing(reg, kOffVariants, false);
     removed += RemoveOursFromRing(reg, kOffRing, false);
-    // Le bucket est balayé sur les 16 catégories : on ne suppose pas que la
-    // catégorie de la source est celle de la constante par défaut.
+    // The bucket is swept over the 16 categories: we do not assume the source's
+    // category is the one of the default constant.
     for (size_t cat = 0; cat < 16; ++cat)
         removed += RemoveOursFromRing(reg, kOffBuckets + cat * kBucketStride, false);
     return removed;
 }
 
-// Avant que le moteur ne détruise/libère le contenu des rings, on retire nos
-// entrées (sinon : destruction de nos définitions par les allocateurs du moteur).
+// Before the engine destroys/frees the content of a registry's rings, our
+// entries are removed from it (otherwise: our definitions destroyed with the
+// engine's allocators).
 //
-// CAUSE RACINE DU CRASH AU SHUTDOWN (2026-11-08) : le retrait était conditionné à
-// `g_cat.registry == registry`. Quand le moteur appelle Clear sur un registre
-// DIFFÉRENT de celui capturé au lookup (l'atelier et le monde ont chacun le leur,
-// et le monde est recréé à chaque chargement), le retrait était SILENCIEUXEMENT
-// SAUTÉ : nos entrées restaient dans les rings et le moteur les détruisait avec
-// ses allocateurs (preuve dans le log : la 2e initialisation de monde à 11:31:45
-// réarme l'injection — donc Clear a bien été appelé — sans la ligne « entrees
-// retirees »). Le retrait est désormais INCONDITIONNEL sur le registre reçu, et
-// aussi tenté sur le registre mémorisé s'il est encore valide.
+// ROOT CAUSE OF THE SHUTDOWN CRASH (2026-11-08): the removal was conditioned on
+// `g_cat.registry == registry`. When the engine called Clear on a registry
+// DIFFERENT from the one captured at lookup (the workbench and the world each
+// have their own, and the world is recreated on every load), the removal was
+// SILENTLY SKIPPED: our entries stayed in the rings and the engine destroyed
+// them with its allocators (evidence in the log: the 2nd world initialisation at
+// 11:31:45 re-arms the injection — so Clear was called — without the "entries
+// removed" line). The removal is now UNCONDITIONAL on the registry received.
 void HookedClear(void* registry) {
-    LockAcquire();                             // B1 : pas d'injection concurrente
-    g_cat.clearing = true;                     // M6 : HookedFindDef refuse d'injecter
+    LockAcquire();                             // B1: no concurrent injection
+    g_cat.clearing = true;                     // M6: HookedFindDef refuses to inject
     const void* injectedInto = g_cat.registry;
     const bool same = registry && registry == injectedInto;
-    // Seul le registre RÉELLEMENT vidé est balayé. Balayer aussi le registre mémorisé
-    // (ancien comportement) retirait le composant du registre VIVANT quand le jeu vidait
-    // un registre secondaire : au retour d'un véhicule de la carte vers l'établi, le jeu
-    // vide un autre registre puis relit le véhicule dans le registre principal, sans
-    // lookup de notre id -> le composant disparaissait du build (mesuré le 2026-11-18 :
-    // Clear(…09470) retirait 11 entrées de …CC570).
+    // Only the registry ACTUALLY being cleared is swept. Also sweeping the
+    // remembered registry (old behaviour) removed the component from the LIVE
+    // registry when the game cleared a secondary one: when a vehicle goes from the
+    // map back to the workbench, the game clears another registry, then reads the
+    // vehicle back in the main registry without a lookup of our id -> the
+    // component disappeared from the build (measured on 2026-11-18:
+    // Clear(…09470) removed 11 entries from …CC570).
     const size_t removed = SweepRegistry(registry);
     if (removed || g_cat.registered || !same)
-        LogInfo("Jet: entrees retirees avant ComponentRegistry::Clear "
-                "(registre=%p, injection=%p, identiques=%d, %zu entree(s))",
+        LogInfo("Jet: entries removed before ComponentRegistry::Clear "
+                "(registry=%p, injection=%p, same=%d, %zu entr(ies))",
                 registry, injectedInto, same ? 1 : 0, removed);
     if (g_cat.originalClear) g_cat.originalClear(registry);
-    // Registre secondaire vidé alors que notre registre d'injection contient toujours
-    // nos entrées : l'état d'injection reste valable, on n'oublie rien (le clone et le
-    // descripteur sont toujours publiés dans ce registre). Lecture seule sous SEH.
+    // A secondary registry was cleared while our injection registry still holds
+    // our entries: the injection state stays valid, nothing is forgotten (the
+    // clone and the descriptor are still published in that registry). Read-only,
+    // under SEH.
     if (!same && injectedInto && g_cat.registered && RingHasId(g_cat.registry, kOffRing, false)) {
         if (g_cat.builtFor == registry) g_cat.builtFor = g_cat.registry;
-        LogInfo("Jet: Clear d'un registre secondaire (%p) ; composant conserve dans %p",
+        LogInfo("Jet: Clear of a secondary registry (%p); component kept in %p",
                 registry, injectedInto);
         g_cat.clearing = false;
         LockRelease();
         return;
     }
-    // Le moteur vient de vider les rings. Le registre vit DANS l'objet monde
-    // (monde+0xbb670) : au CHARGEMENT d'un monde, Clear() est appelé puis les
-    // définitions sont rechargées — garder le pointeur permet donc à la
-    // pulsation HUD (en jeu) de réinjecter sans attendre un lookup. Conserver le
-    // pointeur reste sûr même si Clear accompagne un démontage : l'injection exige
-    // de trouver la définition SOURCE complète dans le ring global, ce qui n'est
-    // possible que dans un registre réellement repeuplé.
+    // The engine just emptied the rings. The registry lives INSIDE the world
+    // object (world+0xbb670): when a world LOADS, Clear() is called and then the
+    // definitions are reloaded — keeping the pointer therefore lets the HUD pulse
+    // (in game) reinject without waiting for a lookup. Keeping the pointer stays
+    // safe even if Clear comes with a teardown: the injection requires finding the
+    // complete SOURCE definition in the global ring, which is only possible in a
+    // registry that was really filled again.
     ForgetDefinition();
-    // Le descripteur a peut-être été libéré par le moteur (DestructXmlDescriptors)
-    // s'il n'a pas pu être retiré du ring juste avant Clear : on oublie nos
-    // poignées au lieu de risquer un usage après libération. Il est reconstruit à
-    // la prochaine injection (fuite bornée : 1 descripteur par Clear).
+    // The descriptor may have been freed by the engine (DestructXmlDescriptors)
+    // if it could not be removed from the ring right before Clear: our handles are
+    // forgotten instead of risking a use after free. It is rebuilt at the next
+    // injection (bounded leak: 1 descriptor per Clear).
     g_cat.descriptor = nullptr;
     g_cat.descriptorId = SwEngineString{};
     g_cat.descriptorXml = SwEngineString{};
-    // Les rings viennent d'être vidés : le clone ne doit JAMAIS être réutilisé tel quel
-    // (ses buffers copiés viennent d'un état du registre qui n'existe plus). `epoch`
-    // invalide toute réutilisation ; la ré-injection aura lieu au PREMIER lookup de notre
-    // identifiant (injection à la demande), pas après un sondage.
+    // The rings were just emptied: the clone must NEVER be reused as is (its
+    // copied buffers come from a registry state that no longer exists). `epoch`
+    // invalidates any reuse; the reinjection happens on the FIRST lookup of our id
+    // (on-demand injection), not after polling.
     ++g_cat.epoch;
     g_cat.sourceUsed = nullptr;
     g_cat.lazyHits = 0;
@@ -1097,10 +1108,10 @@ void HookedClear(void* registry) {
     g_cat.nativeResolved = 0;
     g_cat.pushFails = 0;
     g_cat.registered = false;
-    g_cat.failed = false;                      // un AV passé ne condamne pas la session
+    g_cat.failed = false;                      // a past AV does not doom the session
     g_cat.attempts = 0;
     g_cat.validateFails = 0;
-    g_cat.lastAttemptMs = 0;                   // autorise une tentative immédiate
+    g_cat.lastAttemptMs = 0;                   // allows an immediate attempt
     g_cat.clearing = false;
     if (registry && ValidateRegistryEx(registry, nullptr)) g_cat.registry = registry;
     else g_cat.registry = nullptr;
@@ -1143,15 +1154,15 @@ void RegisterAllLocalization(LocRegisterFn fn) {
     }
 }
 
-// Les écritures de code passent EXCLUSIVEMENT par l'API native du loader :
-// validation VirtualQuery, PAGE_EXECUTE_READWRITE, restauration de la protection
-// d'origine, FlushInstructionCache, et refus si les octets du prologue ne
-// correspondent pas au contrat validé. Le mod ne contient plus aucune écriture
-// directe dans le code du jeu.
+// Code writes go EXCLUSIVELY through the loader's native API: VirtualQuery
+// validation, PAGE_EXECUTE_READWRITE, restore of the original protection,
+// FlushInstructionCache, and refusal if the prologue bytes do not match the
+// validated contract. The mod no longer contains any direct write into the
+// game's code.
 
-// Hook inline d'un prologue de `patchSize` octets (frontière d'instruction
-// garantie par kFindLens / kClearLens). Le trampoline appartient au loader et
-// sert d'original : aucun octet n'est copié ni libéré par le mod.
+// Inline hook of a `patchSize`-byte prologue (instruction boundary guaranteed by
+// kFindLens / kClearLens). The trampoline belongs to the loader and serves as
+// the original: no byte is copied or freed by the mod.
 bool InstallHook(uint8_t* target, void* hook, size_t patchSize, SwHandle* handleOut,
                  void** originalOut) {
     if (!g_engine.native || !g_engine.host || !target || !hook || !handleOut || !originalOut) return false;
@@ -1172,34 +1183,34 @@ bool InstallHook(uint8_t* target, void* hook, size_t patchSize, SwHandle* handle
 size_t JetCatalogueBuildJump(uint8_t* out, size_t patchSize, void* target);
 
 RingGrowth JetCatalogueRingGrowth(uint32_t cap, uint32_t count, bool allowGrow, bool hasGrowFn) {
-    if (count < cap) return RingGrowth::kNone;      // reste de la place : rien à faire
-    if (!hasGrowFn) return RingGrowth::kNone;       // aucune croissance disponible
-    // cap == 0 : le ring n'a JAMAIS été alloué (aucun buffer existant) -> allouer
-    // n'invalide rien et reste sûr même depuis une frame du jeu. C'est la SEULE
-    // croissance autorisée : « croissance de ring autorisée uniquement pour
-    // l'allocation d'un ring jamais alloué (cap==0) ».
+    if (count < cap) return RingGrowth::kNone;      // room left: nothing to do
+    if (!hasGrowFn) return RingGrowth::kNone;       // no growth available
+    // cap == 0: the ring was NEVER allocated (no existing buffer) -> allocating
+    // invalidates nothing and stays safe even from a game frame. This is the ONLY
+    // growth allowed: "ring growth allowed only to allocate a never-allocated ring
+    // (cap==0)".
     if (cap == 0) return RingGrowth::kAllocate;
-    // cap > 0 : un vrai realloc invaliderait le buffer que le moteur peut parcourir.
-    // Refus systématique, même hors frame : la protection est conservée telle quelle.
+    // cap > 0: a real realloc would invalidate the buffer the engine may be
+    // walking. Always refused, even outside a frame: the protection is kept as is.
     (void)allowGrow;
     return RingGrowth::kNone;
 }
 
 // ---------------------------------------------------------------------------
-// Décisions PURES de l'injection à la demande (testables hors du jeu).
+// PURE decisions of the on-demand injection (testable off-game).
 //
-// Étape 1 : que faire avant toute écriture ? Le seul cas qui autorise une écriture est
-// `kInject` ; `kPresent` est l'anti-doublon (aucun re-clonage, aucun rejeu de 8 x 0x2d08)
-// et `kNotOurs` laisse le lookup du jeu strictement inchangé.
+// Step 1: what to do before any write? The only case that allows a write is
+// `kInject`; `kPresent` is the de-duplication (no re-cloning, no replay of
+// 8 x 0x2d08) and `kNotOurs` leaves the game's lookup strictly unchanged.
 LazyResult JetCatalogueLazyPlan(bool isOurs, bool publishedInThisRegistry) {
     if (!isOurs) return LazyResult::kNotOurs;
     if (publishedInThisRegistry) return LazyResult::kPresent;
     return LazyResult::kInject;
 }
 
-// Étape 2 : issue d'une tentative. La source absente n'est JAMAIS confondue avec un
-// succès : c'est le cas « le jeu demande notre id et nous ne pouvons pas le fournir »,
-// qui doit renvoyer null et être journalisé (fail-closed).
+// Step 2: outcome of an attempt. A missing source is NEVER mistaken for a
+// success: it is the "the game asks for our id and we cannot provide it" case,
+// which must return null and be logged (fail-closed).
 LazyResult JetCatalogueLazyOutcome(bool sourceMissing, bool insertOk) {
     if (sourceMissing) return LazyResult::kSourceMissing;
     if (!insertOk) return LazyResult::kRefused;
@@ -1212,21 +1223,21 @@ bool JetCatalogueNeedsInjection(bool registered, bool builtForThisRegistry) {
 
 const char* JetCatalogueLazyResultText(LazyResult result) {
     switch (result) {
-        case LazyResult::kNotOurs: return "nom etranger";
-        case LazyResult::kPresent: return "deja present";
-        case LazyResult::kInject: return "injection requise";
-        case LazyResult::kInjected: return "injecte a la demande";
-        case LazyResult::kSourceMissing: return "source absente";
-        case LazyResult::kRefused: return "injection refusee";
+        case LazyResult::kNotOurs: return "foreign name";
+        case LazyResult::kPresent: return "already present";
+        case LazyResult::kInject: return "injection needed";
+        case LazyResult::kInjected: return "injected on demand";
+        case LazyResult::kSourceMissing: return "source missing";
+        case LazyResult::kRefused: return "injection refused";
     }
-    return "inconnu";
+    return "unknown";
 }
 
 size_t JetCatalogueBuildJump(uint8_t* out, size_t patchSize, void* target) {
     if (!out || !target || patchSize < 14 || patchSize > 24) return 0;
     memset(out, 0x90, patchSize);
     out[0] = 0xFF; out[1] = 0x25;                  // jmp qword ptr [rip+disp32]
-    *reinterpret_cast<int32_t*>(out + 2) = 0;      // disp32 = 0 (obligatoire)
+    *reinterpret_cast<int32_t*>(out + 2) = 0;      // disp32 = 0 (mandatory)
     *reinterpret_cast<uint64_t*>(out + 6) = reinterpret_cast<uint64_t>(target);
     return patchSize;
 }
@@ -1234,23 +1245,23 @@ size_t JetCatalogueBuildJump(uint8_t* out, size_t patchSize, void* target) {
 bool InitJetCatalogueInjection(const SwModHost* host, const char* xmlPath) {
     if (g_cat.findTarget) return true;
     if (!g_engine.native || !g_engine.host || !host) return false;
-    // ACTIF PAR DÉFAUT : seuls les hooks de catalogue sont posés.
+    // ON BY DEFAULT: only the catalogue hooks are installed.
     if (!JetCatalogueInjectionRequested()) {
-        LogInfo("Jet: injection catalogue desactivee (SW_JET_CATALOGUE=0) ; hooks non poses");
+        LogInfo("Jet: catalogue injection disabled (SW_JET_CATALOGUE=0); hooks not installed");
         return false;
     }
     const uint32_t build = g_engine.build;
     if (!build) {
-        LogError("Jet: build moteur non certifie ; injection catalogue annulee");
+        LogError("Jet: engine build not certified; catalogue injection cancelled");
         return false;
     }
-    // Disposition de l'objet « définition » PROPRE AU BUILD (0x2d08 / 0x2848).
-    // L'identité de build vient du profil certificaté du loader, jamais d'une RVA.
+    // Layout of the "definition" object SPECIFIC TO THE BUILD (0x2d08 / 0x2848).
+    // The build identity comes from the loader's certified profile, never from an RVA.
     g_definitionBytes = static_cast<size_t>(JetCatalogueDefinitionBytes(static_cast<int>(build)));
-    LogInfo("Jet: disposition definition build %u : %zu o par variante (dernier champ detruit +0x%llX)",
+    LogInfo("Jet: definition layout for build %u: %zu bytes per variant (last destroyed field +0x%llX)",
             build, g_definitionBytes,
             static_cast<unsigned long long>(JetCatalogueDestroyedTail(static_cast<int>(build))));
-    // Services moteur génériques résolus par le profil de découverte du loader.
+    // Generic engine services resolved by the loader's discovery profile.
     auto service = [host](const char* role) -> uint8_t* {
         return static_cast<uint8_t*>(
             const_cast<void*>(g_engine.native->findSymbol(host, role)));
@@ -1260,8 +1271,8 @@ bool InitJetCatalogueInjection(const SwModHost* host, const char* xmlPath) {
     uint8_t* locRegister = service("engine.localization.register");
     uint8_t* grow = service("engine.component.grow");
     if (!findTarget || !clearTarget || !locRegister || !grow) {
-        LogError("Jet: services catalogue non resolus par le profil (lookup=%p clear=%p loc=%p grow=%p) "
-                 "; aucun hook installe",
+        LogError("Jet: catalogue services not resolved by the profile (lookup=%p clear=%p loc=%p grow=%p)"
+                 "; no hook installed",
                  (void*)findTarget, (void*)clearTarget, (void*)locRegister, (void*)grow);
         return false;
     }
@@ -1271,40 +1282,39 @@ bool InitJetCatalogueInjection(const SwModHost* host, const char* xmlPath) {
     if (xmlPath && *xmlPath) g_cat.xmlPath = xmlPath;
     g_cat.injectDisabled = InjectionDisabledByMarker();
     if (g_cat.injectDisabled)
-        LogWarn("Jet: marqueur .no_catalogue_injection present -> composant NON injecte "
-                "(hooks de diagnostic conserves) ; le catalogue reste 100%% vanilla");
-    // Hook du lookup de définitions.
+        LogWarn("Jet: .no_catalogue_injection marker present -> component NOT injected "
+                "(diagnostic hooks kept); the catalogue stays 100%% vanilla");
+    // Hook of the definition lookup.
     if (!InstallHook(findTarget, reinterpret_cast<void*>(&HookedFindDef), kFindPatch,
                      &g_cat.findHandle, reinterpret_cast<void**>(&g_cat.originalFind))) {
-        LogError("Jet: hook FindComponentDefinitionByName refuse par l'API native");
+        LogError("Jet: FindComponentDefinitionByName hook refused by the native API");
         return false;
     }
     g_cat.findTarget = findTarget;
-    // Hook de ComponentRegistry::Clear (nettoyage avant destruction par le moteur).
+    // Hook of ComponentRegistry::Clear (cleanup before the engine destroys the rings).
     if (!InstallHook(clearTarget, reinterpret_cast<void*>(&HookedClear), kClearPatch,
                      &g_cat.clearHandle, reinterpret_cast<void**>(&g_cat.originalClear))) {
         g_engine.native->hookRestore(g_engine.host, g_cat.findHandle);
         g_cat.findHandle = 0;
         g_cat.findTarget = nullptr;
-        LogError("Jet: hook ComponentRegistry::Clear refuse ; injection annulee");
+        LogError("Jet: ComponentRegistry::Clear hook refused; injection cancelled");
         return false;
     }
     g_cat.clearTarget = clearTarget;
-    LogInfo("Jet: hooks catalogue installes (build %u) : lookup + ComponentRegistry::Clear", build);
+    LogInfo("Jet: catalogue hooks installed (build %u): lookup + ComponentRegistry::Clear", build);
     return true;
 }
 
-// Injection proactive, appelée depuis les pulsations UI (menu principal) ET depuis
-// la mise à jour du HUD / de l'éditeur (donc EN JEU, là où le registre existe).
-// La croissance de ring est autorisée ici : on n'est pas dans une frame où le
-// moteur parcourt les rings du registre.
+// Proactive injection, called from the UI pulses (main menu) AND from the HUD /
+// editor update (so IN GAME, where the registry exists). Ring growth is allowed
+// here: we are not inside a frame where the engine walks the registry's rings.
 void JetCatalogueTick() {
-    if (g_cat.shuttingDown) return;            // PROCESS_DETACH : plus aucune ecriture
+    if (g_cat.shuttingDown) return;            // PROCESS_DETACH: no more writes
     if (!g_cat.findTarget || g_cat.registered || g_cat.failed || g_cat.clearing) return;
     if (!g_engine.native) return;
     if (!g_cat.registry) {
         static bool once = false;
-        if (!once) { once = true; LogInfo("Jet[tick] en attente du registre (findTarget=1 api=1)"); }
+        if (!once) { once = true; LogInfo("Jet[tick] waiting for the registry (findTarget=1 api=1)"); }
         return;
     }
     LockAcquire();
@@ -1318,26 +1328,26 @@ void JetCatalogueTick() {
     LockRelease();
 }
 
-// Démontage (DllMain / DLL_PROCESS_DETACH). IDEMPOTENT et sans danger :
-//   1. on désarme l'injection (plus AUCUNE écriture dans les rings du jeu) ;
-//   2. on retire nos entrées des rings — AVANT de rendre les hooks au moteur, pour
-//      que le Clear qui suit ne puisse pas détruire nos définitions ;
-//   3. on restaure les octets d'origine des deux prologues patchés ;
-//   4. on oublie l'état. On ne libère JAMAIS de mémoire du jeu (ni nos chaînes,
-//      ni nos clones) : c'est le prix d'un démontage qui ne peut pas fauter.
-// Les trampolines ne sont volontairement PAS libérés : un thread du jeu peut
-// encore les exécuter au moment du PROCESS_DETACH (le processus meurt juste
-// après, les fuites sont bornées et sans conséquence).
+// Teardown (DllMain / DLL_PROCESS_DETACH). IDEMPOTENT and harmless:
+//   1. the injection is disarmed (NO more writes into the game's rings);
+//   2. our entries are removed from the rings — BEFORE the hooks are given back
+//      to the engine, so the Clear that follows cannot destroy our definitions;
+//   3. the original bytes of both patched prologues are restored;
+//   4. the state is forgotten. Game memory is NEVER freed (neither our strings
+//      nor our clones): that is the price of a teardown that cannot fault.
+// The trampolines are deliberately NOT freed: a game thread may still run them
+// at PROCESS_DETACH time (the process dies right after; the leaks are bounded
+// and harmless).
 void ShutdownJetCatalogueInjection() {
-    if (!g_cat.findTarget && !g_cat.clearTarget) return;   // déjà démonté
+    if (!g_cat.findTarget && !g_cat.clearTarget) return;   // already torn down
     LockAcquire();
     g_cat.shuttingDown = true;
     g_cat.clearing = true;
     const size_t removed = g_cat.registered ? SweepRegistry(g_cat.registry) : 0;
     if (removed)
-        LogInfo("Jet: arret - %zu entree(s) retiree(s) du catalogue avant restauration des hooks", removed);
+        LogInfo("Jet: shutdown - %zu entr(ies) removed from the catalogue before restoring the hooks", removed);
     LockRelease();
-    // Ordre inverse de l'installation ; sw_hook_restore est idempotent.
+    // Reverse installation order; sw_hook_restore is idempotent.
     if (g_cat.clearHandle) g_engine.native->hookRestore(g_engine.host, g_cat.clearHandle);
     if (g_cat.findHandle) g_engine.native->hookRestore(g_engine.host, g_cat.findHandle);
     g_cat.clearHandle = 0;
@@ -1353,32 +1363,32 @@ void ShutdownJetCatalogueInjection() {
     g_cat.descriptor = nullptr;
     g_cat.descriptorId = SwEngineString{};
     g_cat.descriptorXml = SwEngineString{};
-    LogInfo("Jet: hooks catalogue restaures (demontage)");
+    LogInfo("Jet: catalogue hooks restored (teardown)");
 }
 
 // ---------------------------------------------------------------------------
-// API PURE (testable hors jeu) : géométrie du clone et cohérence des chaînes.
-// Un pas de variante inférieur à la taille réelle de l'objet moteur fait empiéter
-// chaque variante sur la suivante : détruire la variante k libère alors des
-// champs de la variante k+1 -> double free et pointeur bidon dans _aligned_free
-// (crash au shutdown). C'est exactement ce que testent ces deux fonctions.
+// PURE API (testable off-game): clone geometry and string coherence.
+// A variant stride smaller than the engine object's real size makes each variant
+// spill onto the next: destroying variant k then frees fields of variant k+1 ->
+// double free and a bogus pointer in _aligned_free (shutdown crash). That is
+// exactly what these two functions test.
 void JetCatalogueWriteCloneFields(uint8_t* dst, const CloneFieldValues& v) {
     if (!dst) return;
     const DefinitionFieldLayout& L = kDefinitionLayout;
-    // string_t id : {ptr 8, len 4, cap 4}
+    // string_t id: {ptr 8, len 4, cap 4}
     *reinterpret_cast<const char**>(dst + L.idPtr) = v.id;
     *reinterpret_cast<uint32_t*>(dst + L.idLen) = v.idLen;
     *reinterpret_cast<uint32_t*>(dst + L.idCap) = v.idCap;
-    // string_t name : {ptr 8, len 4, cap 4}
+    // string_t name: {ptr 8, len 4, cap 4}
     *reinterpret_cast<const char**>(dst + L.namePtr) = v.name;
     *reinterpret_cast<uint32_t*>(dst + L.nameLen) = v.nameLen;
     *reinterpret_cast<uint32_t*>(dst + L.nameCap) = v.nameCap;
-    // category / value : int32 (le moteur les lit avec MOVSXD / MOV dword).
+    // category / value: int32 (the engine reads them with MOVSXD / MOV dword).
     *reinterpret_cast<int32_t*>(dst + L.category) = v.category;
     *reinterpret_cast<uint32_t*>(dst + L.value) = v.value;
-    // flags : uint64. Le moteur écrit ce champ avec `mov [r15],rax` (8 octets)
-    // et le lit avec `mov rax,[def+0x2b8]` (0x46ec30) ; un store 32 bits
-    // laisserait 0x2bc..0x2bf inchangés. On recopie donc la valeur 64 bits.
+    // flags: uint64. The engine writes this field with `mov [r15],rax` (8 bytes)
+    // and reads it with `mov rax,[def+0x2b8]` (0x46ec30); a 32-bit store would
+    // leave 0x2bc..0x2bf unchanged. So the 64-bit value is copied.
     *reinterpret_cast<uint64_t*>(dst + L.flags) = v.flags;
 }
 
@@ -1388,16 +1398,16 @@ CloneGeometry JetCatalogueCloneGeometry(uint64_t variantBytes, uint32_t variants
     g.variantBytes = variantBytes;
     g.variants = variants;
     g.blockBytes = variantBytes * static_cast<uint64_t>(variants);
-    // Le destructeur moteur libère le champ situé à `destroyedTail` (0x2D00 sur
-    // 1.15.23) : s'il ne tient pas dans une variante, la destruction déborde sur
-    // la variante voisine -> double free / pointeur bidon.
+    // The engine destructor frees the field at `destroyedTail` (0x2D00 on
+    // 1.15.23): if it does not fit in a variant, the destruction spills onto the
+    // neighbouring variant -> double free / bogus pointer.
     g.overlapping = !FieldInsideVariant(variantBytes, destroyedTail, 8);
     return g;
 }
 
-// Taille d'une ComponentDefinition et décalage du dernier champ détruit, PAR
-// BUILD (purs, testables). La disposition a changé entre 1.15.18 (0x2848) et
-// 1.15.23 (0x2d08) ; coder une seule valeur en dur a produit le crash.
+// Size of a ComponentDefinition and offset of the last destroyed field, PER
+// BUILD (pure, testable). The layout changed between 1.15.18 (0x2848) and
+// 1.15.23 (0x2d08); hardcoding a single value caused the crash.
 uint64_t JetCatalogueDefinitionBytes(int build) {
     return build == 1 ? kDefinitionBytesOld : kDefinitionBytesNew;
 }
@@ -1406,12 +1416,12 @@ uint64_t JetCatalogueDestroyedTail(int build) {
     return build == 1 ? kOffDestroyedTailOld : kOffDestroyedTailNew;
 }
 
-// Une chaîne du moteur est {ptr, len, cap}. Le destructeur du jeu fait, pour un
-// objet situé à l'adresse `self` : si (len != 0) { si (ptr != 0) free(ptr) }.
-// Est cohérent : cap >= 32 (capacité minimale du moteur), len <= cap, et
-// ptr non nul dès que len > 0. Une paire (len, cap) lue à la place d'un pointeur
-// (cas du chevauchement de variantes) est donc détectée : c'est 0x0000002000000000
-// pour len=0 / cap=0x20.
+// An engine string is {ptr, len, cap}. The game's destructor does, for an object
+// at address `self`: if (len != 0) { if (ptr != 0) free(ptr) }.
+// Coherent means: cap >= 32 (minimum engine capacity), len <= cap, and ptr
+// non-null as soon as len > 0. A (len, cap) pair read in place of a pointer (the
+// overlapping variants case) is therefore detected: it is 0x0000002000000000 for
+// len=0 / cap=0x20.
 bool JetCatalogueStringCoherent(uint64_t ptr, uint32_t len, uint32_t cap) {
     if (cap < 32) return false;
     if (len > cap) return false;

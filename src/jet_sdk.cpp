@@ -39,7 +39,7 @@ bool InitEngine(const SwModHost* host) {
     g_engine.base = static_cast<uint8_t*>(host->gameBase);
     g_engine.build = native->engineBuild(host);
     if (!g_engine.base || !g_engine.build) {
-        LogError("API native incomplete (base=%p build=%u) ; mod inactif",
+        LogError("native API incomplete (base=%p build=%u); mod inactive",
                  (void*)g_engine.base, g_engine.build);
         return false;
     }
@@ -61,7 +61,7 @@ void LogWarn(const char* fmt, ...) {
 void LogError(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    Emit("ERREUR", fmt, args);
+    Emit("ERROR", fmt, args);
     va_end(args);
 }
 

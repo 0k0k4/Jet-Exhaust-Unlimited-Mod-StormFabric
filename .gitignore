@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Jet Exhaust Unlimited — artefacts de compilation et fichiers locaux
+# Jet Exhaust Unlimited — build artefacts and local files
 # ---------------------------------------------------------------------------
 
 # Build / MSVC
@@ -23,7 +23,7 @@ x86/
 *.res
 *.manifest
 
-# Journaux, dumps de crash, configuration locale du loader
+# Logs, crash dumps, local loader configuration
 *.log
 *.dmp
 crash.dmp*
@@ -31,7 +31,7 @@ StormworksModLoader.log
 _modloader.ini
 mods/_modloader.ini
 
-# Éditeurs / IDE
+# Editors / IDE
 .vs/
 .vscode/
 .idea/
@@ -50,7 +50,7 @@ __pycache__/
 venv/
 env/
 
-# Temporaires
+# Temporary files
 *.bak
 *.tmp
 *.temp

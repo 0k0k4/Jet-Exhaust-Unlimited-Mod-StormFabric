@@ -1,181 +1,181 @@
 # Changelog — Jet Exhaust Unlimited
 
-Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
-Version du mod : `2.0.1` (celle de `mod/jet_unlimited/mod.json`).
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Mod version: `2.0.1` (the one in `mod/jet_unlimited/mod.json`).
 
-Le mod est **autonome** : tout le code de hook est compilé dans
-`jet_unlimited.dll` (sources `src/jet_*.cpp`). Le loader StormFabric ne contient
-plus aucun code propre à ce mod ; il expose des primitives natives génériques.
+The mod is **self-contained**: all the hook code is compiled into
+`jet_unlimited.dll` (sources `src/jet_*.cpp`). The StormFabric loader no longer
+contains any code specific to this mod; it exposes generic native primitives.
 
 ---
 
 ## [Unreleased]
 
+### Changed
+
+- All documentation, code comments and log messages are now in English.
+  `docs/FONCTIONNEMENT.md` is renamed `docs/HOW_IT_WORKS.md`.
+
 ## [2.0.1] — 2026-11-18
 
-### Corrigé
+### Fixed
 
-- **Le composant disparaissait de l'établi** quand un véhicule posé sur la carte
-  y était ramené (sans erreur ; un rechargement le faisait revenir). Le jeu vide
-  alors un registre de composants secondaire, et le hook de
-  `ComponentRegistry::Clear` retirait aussi nos entrées du registre principal,
-  toujours vivant. Seul le registre réellement vidé est désormais balayé, et
-  l'état d'injection est conservé tant que nos entrées sont dans le registre
-  principal.
+- **The component disappeared from the workbench** when a vehicle placed on the
+  map was brought back to it (no error; reloading brought it back). The game
+  then clears a secondary component registry, and the `ComponentRegistry::Clear`
+  hook also removed our entries from the main registry, which was still alive.
+  Only the registry actually being cleared is swept now, and the injection state
+  is kept while our entries are still in the main registry.
 
-### Vérifié / durci
+### Verified / hardened
 
-- **Largeur de `flags` (`+0x2b8`) certifiée à 8 octets** sur 1.15.23 :
-  écriture `mov qword ptr [r15],rax` (`0x1408efb48`), lecture 64 bits dans
-  l'enregistrement de bucket (`0x14046ec9c`), lecture 32 bits du dword bas dans
-  `ComponentRegistry::Clear` (`0x14046e7d6`). Preuves et instructions dans
+- **Width of `flags` (`+0x2b8`) certified as 8 bytes** on 1.15.23: written by
+  `mov qword ptr [r15],rax` (`0x1408efb48`), read as 64 bits in the bucket
+  registration (`0x14046ec9c`), low dword read as 32 bits in
+  `ComponentRegistry::Clear` (`0x14046e7d6`). Evidence and instructions in
   `docs/LAYOUT_DEFINITION.md`.
-- Disposition des champs du clone centralisée dans `kDefinitionLayout`
-  (`src/jet_catalogue.h`) avec `static_assert` sur chaque offset/largeur ;
-  l'écriture des champs passe par `JetCatalogueWriteCloneFields` (pure).
-- Test `TestCloneFieldWidths` : sentinelle sur un buffer de `0x2d08` octets,
-  vérifie que `flags` écrit bien 8 octets, que `+0x2c0` reste intact et qu'un
-  store 32 bits laisserait `+0x2bc..+0x2bf` inchangés.
+- Clone field layout centralised in `kDefinitionLayout` (`src/jet_catalogue.h`)
+  with a `static_assert` on every offset/width; fields are written through
+  `JetCatalogueWriteCloneFields` (pure).
+- `TestCloneFieldWidths` test: sentinel on a `0x2d08`-byte buffer, checks that
+  `flags` writes 8 bytes, that `+0x2c0` stays intact and that a 32-bit store
+  would leave `+0x2bc..+0x2bf` unchanged.
 
 ## [2.0.0] — 2026-11-09
 
 ### Architecture
 
-- **Le mod est autonome.** `jet_unlimited.dll` porte l'injection catalogue et le
-  patch de sur-régime. Le loader ne contient plus aucune référence au composant.
-- Le mod n'utilise que l'API native générique du loader (extension `api->native`) :
-  `findSymbol` (rôles moteur résolus par le profil de découverte),
-  `findSignature` (signature propre au mod, occurrence unique),
-  `readMemory`/`writeMemory` (bornés, protection restaurée),
-  `hookInline`/`hookRestore` (contrat d'octets, trampoline loader, restauration
-  idempotente), `gameAlloc`, `stringMake`/`stringFree`, `codeAllocNear`,
+- **The mod is self-contained.** `jet_unlimited.dll` carries the catalogue
+  injection and the over-rev patch. The loader no longer references the component.
+- The mod only uses the loader's generic native API (`api->native` extension):
+  `findSymbol` (engine roles resolved by the discovery profile),
+  `findSignature` (signature owned by the mod, single occurrence),
+  `readMemory`/`writeMemory` (bounded, protection restored),
+  `hookInline`/`hookRestore` (byte contract, loader trampoline, idempotent
+  restore), `gameAlloc`, `stringMake`/`stringFree`, `codeAllocNear`,
   `engineBuild`.
-- Plus aucune RVA d'exécutable dans le mod : les services moteur viennent du
-  profil du loader ; le site du sur-régime vient d'une signature validée.
-- Les hooks sont restaurés avant le déchargement de la DLL (`SwModUnload` puis
-  `DllMain(PROCESS_DETACH)`), dans l'ordre inverse de l'installation.
+- No executable RVA left in the mod: engine services come from the loader's
+  profile; the over-rev site comes from a validated signature.
+- Hooks are restored before the DLL is unloaded (`SwModUnload` then
+  `DllMain(PROCESS_DETACH)`), in reverse installation order.
 
-### Ajouté
+### Added
 
-- `build_mod.bat` : compilation du mod contre le SDK StormFabric, produit
+- `build_mod.bat`: builds the mod against the StormFabric SDK, produces
   `mod/jet_unlimited/jet_unlimited.dll`.
-- `tests/run_tests.bat` + `tests/mod_logic_tests.cpp` : tests hors jeu autonomes
-  (masque de signature, stub machine, croissance de ring, injection à la demande,
-  géométrie du clone, chaînes, saut absolu).
+- `tests/run_tests.bat` + `tests/mod_logic_tests.cpp`: self-contained off-game
+  tests (signature mask, machine stub, ring growth, on-demand injection, clone
+  geometry, strings, absolute jump).
 
-### Supprimé
+### Removed
 
-- `tools/sync_to_stormfabric.bat` : plus nécessaire, le mod ne copie plus ses
-  sources dans le loader.
-- Les copies de tests dépendantes des internes du loader.
+- `tools/sync_to_stormfabric.bat`: no longer needed, the mod no longer copies its
+  sources into the loader.
+- The test copies that depended on loader internals.
 
-### Corrigé
+### Fixed
 
-- Le composant **reste sur le véhicule après un aller-retour à l'atelier** :
-  l'injection est déclenchée à la demande dans le hook de lookup et ré-armée
-  après `ComponentRegistry::Clear`, sans sondage temporisé.
+- The component **stays on the vehicle after a round trip to the workbench**:
+  the injection is triggered on demand in the lookup hook and re-armed after
+  `ComponentRegistry::Clear`, without timed polling.
 
 ---
 
 ## [1.2.0] — 2026-11-08
 
-### Ajouté
+### Added
 
-- Dépôt autonome du mod : documentation, assets, copies de référence du code de
-  hook et des tests.
-- `docs/FONCTIONNEMENT.md` : architecture complète (catalogue + patch).
-- `docs/REVERSE_ENGINEERING.md` : RVA des deux builds, signatures, offsets,
-  méthode et analyse du crash au shutdown.
-- `docs/INSTALLATION.md` : installation, vérification, désactivation,
-  désinstallation.
-- `tools/sync_to_stormfabric.bat` : resynchronisation des 4 fichiers source et
-  des 3 fichiers de test vers un checkout StormFabric.
-- `tools/README.md` : portée des scripts d'analyse réellement présents.
+- Standalone repository for the mod: documentation, assets, reference copies of
+  the hook code and the tests.
+- `docs/FONCTIONNEMENT.md` (now `docs/HOW_IT_WORKS.md`): full architecture
+  (catalogue + patch).
+- `docs/REVERSE_ENGINEERING.md`: RVAs of both builds, signatures, offsets,
+  method and analysis of the shutdown crash.
+- `docs/INSTALLATION.md`: installation, checking, disabling, uninstalling.
+- `tools/sync_to_stormfabric.bat`: resynchronises the 4 source files and the
+  3 test files into a StormFabric checkout.
+- `tools/README.md`: scope of the analysis scripts actually present.
 
-### Corrigé (côté loader, repris dans cette copie)
+### Fixed (loader side, carried over into this copy)
 
-- **Injection à la demande** : le hook de `FindComponentDefinitionByName`
-  réinjecte au premier lookup, après `ComponentRegistry::Clear` ou dans un second
-  registre. Corrige la disparition du composant lors de la désérialisation d'un
-  véhicule.
-- **Croissance de ring** : un ring `cap=0,count=0` (jamais alloué) est désormais
-  alloué au lieu d'être confondu avec un ring plein. Le `realloc` d'un ring
-  réellement plein reste interdit dans une frame de jeu.
-- **Géométrie du clone** : taille de variante choisie par build (`0x2d08` en
-  1.15.23, `0x2848` en 1.15.18) et vérification que le dernier champ détruit
-  (`+0x2d00` / `+0x2840`) tient dans la variante. Corrige le crash au shutdown
-  par chevauchement/double free.
-- **Démontage** : retrait de nos entrées des rings avant `Clear`, restauration
-  des prologues, conservation du stub si la restauration échoue.
-- **Stub de sur-régime** : limite `+inf` au lieu de `1e30f`, pour couvrir `+inf`
-  et les NaN ; chargement du RPS dans `XMM0` (et non `XMM1`) pour que le jeu
-  relise la bonne valeur ; `comiss` final pour le `jbe` original.
-- **Patch transactionnel** : vérification des 19 octets d'origine, sauvegarde,
-  `CALL rel32` + 14 NOP, restauration.
+- **On-demand injection**: the `FindComponentDefinitionByName` hook reinjects
+  on the first lookup, after `ComponentRegistry::Clear` or in a second registry.
+  Fixes the component disappearing while a vehicle is deserialized.
+- **Ring growth**: a `cap=0,count=0` ring (never allocated) is now allocated
+  instead of being mistaken for a full ring. Reallocating a really full ring is
+  still forbidden inside a game frame.
+- **Clone geometry**: variant size chosen per build (`0x2d08` on 1.15.23,
+  `0x2848` on 1.15.18) and a check that the last destroyed field
+  (`+0x2d00` / `+0x2840`) fits in the variant. Fixes the shutdown crash caused by
+  overlapping variants / double free.
+- **Teardown**: our entries are removed from the rings before `Clear`, prologues
+  are restored, and the stub is kept if the restore fails.
+- **Over-rev stub**: `+inf` limit instead of `1e30f`, to cover `+inf` and NaN;
+  RPS loaded into `XMM0` (not `XMM1`) so the game reads back the right value;
+  final `comiss` for the original `jbe`.
+- **Transactional patch**: the 19 original bytes are checked, saved, replaced by
+  `CALL rel32` + 14 NOP, and restored.
 
-### Modifié
+### Changed
 
-- Le composant fonctionnel est la **chambre de combustion**
-  `jet_engine_combustion_chamber_unlimited` (`value=500123`) ; le fichier
-  `jet_engine_exhaust_unlimited.xml` reste une variante cosmétique.
-- Le catalogue est injecté **entièrement en mémoire** : aucun fichier écrit dans
-  `rom/` ni `%APPDATA%` par le chemin actif. Le code de réconciliation de
-  fichiers historique reste compilé mais n'est plus appelé.
-- Description de `mod.json` mise à jour pour refléter l'injection en mémoire
-  (elle mentionnait encore `rom/data/components`).
+- The working component is the **combustion chamber**
+  `jet_engine_combustion_chamber_unlimited` (`value=500123`); the
+  `jet_engine_exhaust_unlimited.xml` file stays a cosmetic variant.
+- The catalogue is injected **entirely in memory**: the active path writes no
+  file to `rom/` or `%APPDATA%`. The historical file reconciliation code is still
+  compiled but no longer called.
+- `mod.json` description updated for the in-memory injection (it still mentioned
+  `rom/data/components`).
 
-### Connu
+### Known
 
-- Le champ `value=500123` est aussi le prix du composant.
-- Support limité aux builds 1.15.23 et 1.15.18.
-- Multijoueur non certifié.
-- Commentaires historiques « bypass désactivé » dans `jet_patch.cpp` /
-  `mods_ui.cpp` : la constante `kOverrevPatchEnabled` vaut `true`.
-- `tests/jet_test_sigs.h` déclare `kStubBlockBytes = 0x40` alors que le bloc de
-  production fait `0x68` (le test passe, mais la constante mérite d'être alignée).
+- The `value=500123` field is also the component's price.
+- Only builds 1.15.23 and 1.15.18 are supported.
+- Multiplayer not certified.
+- Historical "bypass disabled" comments in `jet_patch.cpp` / `mods_ui.cpp`: the
+  `kOverrevPatchEnabled` constant is `true`.
+- `tests/jet_test_sigs.h` declares `kStubBlockBytes = 0x40` while the production
+  block is `0x68` (the test passes, but the constant should be aligned).
 
 ---
 
 ## [1.1.0] — 2026-11-07
 
-### Ajouté
+### Added
 
-- Injection du composant au catalogue par hooks de
-  `FindComponentDefinitionByName` et `ComponentRegistry::Clear`.
-- Clone de la définition vanilla en 8 variantes, avec id/nom/catégorie/value et
-  descripteur XML.
-- Validation des signatures de catalogue sur les deux builds (64/72 octets).
-- Tests hors jeu : encodage du saut, croissance de ring, géométrie du clone,
-  cohérence des chaînes, décisions d'injection à la demande.
+- Component injection into the catalogue through hooks on
+  `FindComponentDefinitionByName` and `ComponentRegistry::Clear`.
+- Clone of the vanilla definition in 8 variants, with id/name/category/value and
+  an XML descriptor.
+- Validation of the catalogue signatures on both builds (64/72 bytes).
+- Off-game tests: jump encoding, ring growth, clone geometry, string coherence,
+  on-demand injection decisions.
 
-### Corrigé
+### Fixed
 
-- L'injection n'est plus pilotée uniquement par les pulsations UI du menu
-  principal (qui n'existent pas pendant le chargement d'un monde).
-- Le registre n'est plus rejeté en silence pour un `head` hors bornes : il est
-  normalisé et les refus sont journalisés.
+- The injection is no longer driven only by the main menu UI pulses (which do not
+  exist while a world loads).
+- The registry is no longer silently rejected for an out-of-range `head`: it is
+  normalised and refusals are logged.
 
 ---
 
 ## [1.0.0] — 2026-11-06
 
-### Ajouté
+### Added
 
-- Site de sur-régime certifié sur 1.15.23 (`0x35352a`) et 1.15.18 (`0x35428a`).
-- Signature d'opcodes de 32 octets, constante `200.0f` (`0x43480000`) résolue par
+- Over-rev site certified on 1.15.23 (`0x35352a`) and 1.15.18 (`0x35428a`).
+- 32-byte opcode signature, `200.0f` constant (`0x43480000`) resolved through
   `rel32`.
-- Patch de 19 octets (`CALL` + NOP), stub à ±2 Go, identité par `value=500123`.
-- Injection catalogue initiale et assets du mod (XML de chambre, XML
-  d'échappement cosmétique, `.bin` compilé).
-- Tests de signature, de stub, de patch/rollback et de matérialisation.
+- 19-byte patch (`CALL` + NOP), stub within ±2 GB, identity through `value=500123`.
+- Initial catalogue injection and mod assets (chamber XML, cosmetic exhaust XML,
+  compiled `.bin`).
+- Signature, stub, patch/rollback and materialisation tests.
 
 ---
 
-## Notes de maintenance
+## Maintenance notes
 
-- Modifier d'abord StormFabric (source de vérité), compiler et tester, puis
-  recopier ici (section 6 du README).
-- Toute nouvelle version du jeu doit être précédée d'une RE complète : les
-  signatures ne sont pas des garanties de compatibilité.
-- Ne jamais patcher la constante globale `200.0f` : elle est partagée par de
-  nombreuses fonctions du moteur.
+- Every new game version must be preceded by a full RE pass: the signatures are
+  not compatibility guarantees.
+- Never patch the global `200.0f` constant: it is shared by many engine functions.

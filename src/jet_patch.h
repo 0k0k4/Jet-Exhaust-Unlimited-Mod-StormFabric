@@ -1,11 +1,11 @@
 #pragma once
-// Jet Exhaust Unlimited — contournement du sur-régime (over-rev) pour le SEUL
-// composant identifié par sa constante `value`.
+// Jet Exhaust Unlimited — over-rev bypass for the ONE component identified by
+// its `value` constant.
 //
-// Le site est localisé par une signature d'octets propre au mod (le loader ne
-// connaît pas cette signature) ; le patch est posé via `sw_hook_inline` :
-// contrat d'octets vérifié, trampoline fourni par le loader, restauration
-// idempotente. Aucune adresse d'exécutable n'est codée en dur.
+// The site is found by a byte signature owned by the mod (the loader does not
+// know this signature); the patch is installed through `sw_hook_inline`: byte
+// contract checked, trampoline provided by the loader, idempotent restore. No
+// executable address is hardcoded.
 #include "sw_mod_sdk.h"
 
 #include <cstddef>
@@ -17,10 +17,10 @@ bool InitOverrevPatch(const SwModHost* host);
 void ShutdownOverrevPatch();
 bool OverrevPatchActive();
 
-// ---- Interne pur, testable hors jeu ---------------------------------------
-// Signature du site (30 octets) : movss xmm0,[rdi+0x1bc] ; movss xmm6,[rip+rel32] ;
-// comiss ; jbe rel32 ; cmp byte [rdi+0x4d9],0. Les deux rel32 sont des jokers
-// (spécifiques au build) ; tous les autres octets sont fixes.
+// ---- Pure internals, testable off-game ------------------------------------
+// Site signature (32 bytes): movss xmm0,[rdi+0x1bc] ; movss xmm6,[rip+rel32] ;
+// comiss ; jbe rel32 ; cmp byte [rdi+0x4d9],0. Both rel32s are wildcards
+// (build-specific); every other byte is fixed.
 constexpr uint8_t kSiteSignature[] = {
     0xF3, 0x0F, 0x10, 0x87, 0xBC, 0x01, 0x00, 0x00,   // movss xmm0,[rdi+0x1bc]
     0xF3, 0x0F, 0x10, 0x35, 0x00, 0x00, 0x00, 0x00,   // movss xmm6,[rip+rel32]
@@ -32,16 +32,16 @@ constexpr size_t kSiteSignatureSize = sizeof(kSiteSignature);
 constexpr size_t kPatchBytes = 19;       // movss + movss + comiss -> jmp (14) + NOP
 constexpr size_t kStubBlockBytes = 0x50;
 constexpr uint32_t kExpectedLimitBits = 0x43480000u;  // 200.0f
-constexpr uint32_t kSignatureValue = 500123u;         // champ `value` de notre XML
+constexpr uint32_t kSignatureValue = 500123u;         // `value` field of our XML
 constexpr uint32_t kDefinitionOffsetValue = 0x2b4;    // (definition + 0x2b4) == value
 constexpr uint32_t kDefinitionOffsetFromThis = 0x58;  // this->definition
 
-// Remplit `mask` (même longueur) : 0xFF pour les octets fixes, 0x00 pour les
-// deux opérandes rel32.
+// Fills `mask` (same length): 0xFF for the fixed bytes, 0x00 for the two rel32
+// operands.
 void BuildSiteMask(uint8_t* mask);
-// Stub machine autonome (aucun trampoline nécessaire) :
-//   limite vanilla par défaut, +inf si definition->value == signature, puis
-//   reproduit movss/comiss et saute en `resume` (= site + kPatchBytes).
+// Self-contained machine stub (no trampoline needed):
+//   vanilla limit by default, +inf if definition->value == signature, then
+//   replays movss/comiss and jumps to `resume` (= site + kPatchBytes).
 size_t BuildJetStub(uint8_t* out, size_t capacity, uint32_t signature, float hugeLimit,
                     float vanillaLimit, void* resume);
 

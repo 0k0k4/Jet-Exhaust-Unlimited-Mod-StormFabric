@@ -1,55 +1,30 @@
-# Outils
+# Tools
 
-Outils d'analyse et de synchronisation réellement présents dans le dépôt
-StormFabric au moment de la copie. Ils sont fournis pour rejouer la
-rétro-ingénierie et le diagnostic, pas pour être exécutés à chaque build.
+Analysis tools used for the reverse engineering and the diagnostics. They are
+here to replay that work, not to run on every build.
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `ghidra/Dump.java` | script Ghidra : dump de fonctions / décompilation à partir d'un fichier de commandes |
-| `crash_dump.py` | parseur de minidump Windows (MDMP) : modules, threads, piles, exception, mémoire, FunctionTable |
-| `match_clear.py` | report de la signature de `ComponentRegistry::Clear` de 1.15.18 vers 1.15.23 et extraction du masque |
-| `gen_grow.py` | même méthode pour `RingBuffer::Grow` |
-| `sync_to_stormfabric.bat` | copie les 4 fichiers source et les 3 fichiers de test de ce dépôt vers un checkout StormFabric |
+| `ghidra/Dump.java` | Ghidra script: function dump / decompilation from a command file |
+| `crash_dump.py` | Windows minidump (MDMP) parser: modules, threads, stacks, exception, memory, FunctionTable |
+| `match_clear.py` | carries the `ComponentRegistry::Clear` signature from 1.15.18 over to 1.15.23 and extracts the mask |
+| `gen_grow.py` | same method for `RingBuffer::Grow` |
 
-## `sync_to_stormfabric.bat`
+## Missing scripts
 
-```bat
-tools\sync_to_stormfabric.bat "H:\Bordel 4TO NVME\StormFabric"
-```
+The names `find_catalogue.py`, `gen_sigs*.py`, `compare_builds.py`,
+`read_const.py`, `match_funcs.py`, `match_helpers.py` and `binparse*.py` show up
+in some work plans, but these files **do not exist**. The scripts actually
+present and related to the jet are the ones listed above.
 
-Le script :
+## Dependencies
 
-- vérifie que la destination contient bien `src\jet_patch.cpp` ;
-- copie `src\jet_patch.cpp`, `src\jet_patch.h`, `src\jet_catalogue.cpp`,
-  `src\jet_catalogue.h` ;
-- copie `tests\jet_patch_tests.cpp`, `tests\jet_catalogue_tests.cpp`,
-  `tests\jet_test_sigs.h` ;
-- ne touche ni aux autres modules, ni aux docs, ni aux assets.
-
-Après exécution, compiler et tester dans StormFabric :
-
-```bat
-cmd /c ".\build.bat"
-cmd /c ".\tests\run_tests.bat"
-```
-
-## Scripts absents
-
-Les noms `find_catalogue.py`, `gen_sigs*.py`, `compare_builds.py`,
-`read_const.py`, `match_funcs.py`, `match_helpers.py` et `binparse*.py`
-apparaissent dans certains plans de travail, mais ces fichiers **n'existent pas**
-dans `StormFabric/build/tests/` au moment de la copie. Les scripts réellement
-présents et liés au jet sont ceux listés ci-dessus.
-
-## Dépendances
-
-Les scripts Python utilisent la bibliothèque standard (`struct`, `os`, `sys`) et
-supposent les chemins des exécutables de référence :
+The Python scripts only use the standard library (`struct`, `os`, `sys`) and
+assume the paths of the reference executables:
 
 ```text
 H:/Jeux/StormworksV1.15.23/Stormworks/stormworks64.exe
 H:/Jeux/Stormworks/stormworks64.exe
 ```
 
-Adapter ces chemins dans les scripts si votre installation diffère.
+Change these paths in the scripts if your install is somewhere else.

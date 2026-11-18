@@ -1,15 +1,15 @@
-// Jet Exhaust Unlimited — DLL du mod (StormFabric SDK natif).
+// Jet Exhaust Unlimited — the mod's DLL (StormFabric native SDK).
 //
-// Le mod est AUTONOME : il porte toute sa logique et n'utilise que les primitives
-// génériques du loader (résolution de symboles par profil de découverte, accès
-// mémoire borné, hooks inline avec trampoline et restauration, allocateur et
-// chaînes du moteur, mémoire exécutable). Aucune adresse d'exécutable n'est
-// codée en dur et rien n'est écrit hors du dossier du mod.
+// The mod is SELF-CONTAINED: it carries all of its logic and only uses the
+// loader's generic primitives (symbol resolution through the discovery profile,
+// bounded memory access, inline hooks with trampoline and restore, the engine's
+// allocator and strings, executable memory). No executable address is hardcoded
+// and nothing is written outside the mod folder.
 //
-//   * src/jet_patch.cpp     : contournement du sur-régime pour le composant dont
-//                             la définition porte value == 500123 ;
-//   * src/jet_catalogue.cpp : injection du composant dans le catalogue, à la
-//                             demande, dans le hook de lookup du moteur.
+//   * src/jet_patch.cpp     : over-rev bypass for the component whose
+//                             definition has value == 500123;
+//   * src/jet_catalogue.cpp : injection of the component into the catalogue, on
+//                             demand, in the engine's lookup hook.
 #include "sw_mod_sdk.h"
 
 #include "jet_catalogue.h"
@@ -49,19 +49,19 @@ SW_MOD_EXPORT bool SwModInit(const SwModHost* host) {
     if (!jet::InitEngine(host)) {
         if (host && host->log)
             host->log(host->modId,
-                      "ERREUR: API native StormFabric indisponible ou build moteur non certifie ; "
-                      "mod inactif (aucun hook, aucune ecriture)");
+                      "ERROR: StormFabric native API unavailable or engine build not certified; "
+                      "mod inactive (no hook, no write)");
         return false;
     }
     g_shutdownDone = false;
     const std::string xml = DefinitionPath(host);
     const bool catalogue = jet::InitJetCatalogueInjection(host, xml.c_str());
     const bool overrev = jet::InitOverrevPatch(host);
-    jet::LogInfo("Jet Exhaust Unlimited actif (build %u) : catalogue %s, sur-regime %s",
-                 jet::g_engine.build, catalogue ? "injecte a la demande" : "inactif",
-                 overrev ? "sans limite pour value=500123" : "inactif (vanilla conserve)");
-    // Le mod reste charge meme si une capacite est indisponible : chaque
-    // primitive est fail-closed et a journalise la cause exacte.
+    jet::LogInfo("Jet Exhaust Unlimited active (build %u): catalogue %s, over-rev %s",
+                 jet::g_engine.build, catalogue ? "injected on demand" : "inactive",
+                 overrev ? "unlimited for value=500123" : "inactive (vanilla kept)");
+    // The mod stays loaded even if a capability is unavailable: every primitive
+    // fails closed and has logged the exact cause.
     return true;
 }
 
@@ -73,9 +73,9 @@ SW_MOD_EXPORT void SwModUnload(void) {
     ShutdownAll();
 }
 
-// Filet de securite : Windows decharge les DLL dans l'ordre inverse du chargement,
-// donc le mod avant le loader. Nos prologues sont restaures ici si SwModUnload
-// n'a pas ete appele. Idempotent.
+// Safety net: Windows unloads DLLs in reverse load order, so the mod before the
+// loader. Our prologues are restored here if SwModUnload was not called.
+// Idempotent.
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
