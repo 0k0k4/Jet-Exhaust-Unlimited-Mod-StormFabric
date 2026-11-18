@@ -11,12 +11,12 @@ contains any code specific to this mod; it exposes generic native primitives.
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-11-18
+
 ### Changed
 
 - All documentation, code comments and log messages are now in English.
   `docs/FONCTIONNEMENT.md` is renamed `docs/HOW_IT_WORKS.md`.
-
-## [2.0.1] — 2026-11-18
 
 ### Fixed
 
